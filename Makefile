@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-.PHONY: clone venv weights run test doctor
+.PHONY: clone venv weights run test doctor diagnose-nms
 
 FILE  ?= 0
 EXP   ?= third_party/ByteTrack/exps/custom/yolox_x_coco.py
@@ -24,6 +24,10 @@ clone:
 
 venv:
 	@bash scripts/setup_env.sh
+
+# Quick diagnostic for Torch/Torchvision CUDA ops (incl. torchvision::nms)
+diagnose-nms:
+	python scripts/verify_torchvision_nms.py
 
 doctor:
 	. $(VENV_DIR)/bin/activate && $(PYTHON) scripts/doctor.py
@@ -41,4 +45,3 @@ test:
 .PHONY: ort-check
 ort-check:
 	python -c 'import onnxruntime as ort; print(ort.__version__, ort.get_available_providers())'
-

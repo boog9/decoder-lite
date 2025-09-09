@@ -14,21 +14,29 @@ Minimal ByteTrack wrapper that tracks only COCO classes **0** (person) and **32*
 - `scripts/setup_env.sh` installs `onnxruntime-gpu` on Linux/Windows and only
   falls back to the CPU wheel if the GPU wheel is unavailable.
 
-### Install on Python 3.13 (CUDA 12.x)
+### Torch/Torchvision (CUDA 12.x, Python 3.13)
+For Python 3.13 on CUDA 12.x we install **torch 2.5.1+cu121** from the official PyTorch index and **build torchvision 0.20.1 from source with CUDA**. Prebuilt cp313 wheels for torchvision 0.20.1 with cu121 are not published; CPU wheels miss C++/CUDA ops (e.g., `torchvision::nms`), leading to runtime errors in ByteTrack/YOLOX.
+
+**OS packages (recommended)**
 ```bash
-make venv      # this runs scripts/setup_env.sh
-make doctor    # verify torch/yolox/onnxruntime-gpu
+sudo apt-get update
+sudo apt-get install -y build-essential ninja-build libjpeg-dev zlib1g-dev libpng-dev ffmpeg
 ```
-This repository vendors ByteTrack under `third_party/ByteTrack` (it is **not** a git submodule).
-The setup script:
-1. clones ByteTrack if missing,
-2. installs build tools and PyTorch (CUDA 12.1 wheels),
-3. installs ByteTrack in editable mode with `--no-build-isolation`,
-4. installs ONNX Runtime GPU `==1.22.0` plus `onnx` and `onnxsim`.
+
+**One-liners**
+```bash
+make venv            # full setup including ByteTrack clone and deps
+make diagnose-nms    # prints versions and checks that torchvision::nms is available
+make run FILE=video.mp4
+```
+
+We never modify files under `third_party/ByteTrack/`. If the folder is missing or incomplete, it is cloned via `scripts/clone_bytetrack.sh` before the editable install.
 
 > Notes:
 > * Do **not** use `--index-url` globally for PyTorch wheels — we use `--extra-index-url` so other packages come from PyPI.
 > * Avoid mixing CPU and GPU ONNX Runtime on the same platform.
+> * If you need to re-run only the Torch/Torchvision setup, call:
+>   `bash scripts/setup_env.sh --vision-only` (this skips cloning/ByteTrack deps).
 > * We do not modify any `third_party/ByteTrack/*.py` sources.
 
 ## Setup
@@ -39,7 +47,6 @@ make venv      # create venv, clone ByteTrack, install deps
 make weights
 ```
 `make venv` executes `scripts/setup_env.sh` which clones and installs ByteTrack in editable mode.
-
 
 ## Usage
 ### Track a video
