@@ -53,14 +53,11 @@ def test_bytetrack_shapes(cols: int) -> None:
     else:
         dets[0, 4] = 0.9
     img_info = {"ratio": 1.0, "height": 100, "width": 100}
+    dets[:, :4] /= img_info["ratio"]
 
-    dets_in, cls_col = normalize_dets(dets, img_info, {0, 32})
+    dets_in = normalize_dets(dets, {0, 32})
     tracker = DummyTracker()
     tracker.update(dets_in, [img_info["height"], img_info["width"]], (640, 640))
     assert tracker.calls == 1
     assert tracker.last_shape is not None
     assert tracker.last_shape[1] == 5
-    if cols >= 7:
-        assert cls_col is not None and cls_col.size == dets_in.shape[0]
-    else:
-        assert cls_col is None
