@@ -13,8 +13,10 @@
 """Verify that ONNX Runtime uses GPU execution on supported platforms.
 
 This script ensures that the CUDA execution provider is available on
-Linux and Windows hosts. It prints the ONNX Runtime version and the
-available providers.
+Linux and Windows hosts when a GPU is accessible. The check can be
+skipped by setting ``ALLOW_CPU_ORT=1`` or when no NVIDIA GPU is detected,
+such as on macOS or CPU-only CI environments. It prints the ONNX
+Runtime version and the available providers.
 
 Example:
     Run the check after installing dependencies::
@@ -28,7 +30,9 @@ Example output::
 
 from __future__ import annotations
 
+import os
 import platform
+import shutil
 import sys
 
 
@@ -45,9 +49,18 @@ def main() -> None:
         raise ImportError(f"Could not import onnxruntime: {exc}") from exc
 
     providers = ort.get_available_providers()
-    if platform.system() in ("Linux", "Windows"):
+    cpu_mode = (
+        os.getenv("ALLOW_CPU_ORT") == "1"
+        or platform.system() == "Darwin"
+        or shutil.which("nvidia-smi") is None
+    )
+    if not cpu_mode and platform.system() in ("Linux", "Windows"):
         assert "CUDAExecutionProvider" in providers, (
             f"CUDAExecutionProvider not available: {providers}"
+        )
+    else:
+        assert "CPUExecutionProvider" in providers, (
+            f"CPUExecutionProvider not available: {providers}"
         )
     print(f"ONNX Runtime OK: {ort.__version__} {providers}")
 
