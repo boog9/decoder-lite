@@ -11,7 +11,6 @@
 # limitations under the License.
 
 set -euo pipefail
-export PIP_PREFER_BINARY=1
 
 # Create or reuse a virtual environment.
 if [[ -z "${VIRTUAL_ENV:-}" ]]; then
@@ -40,8 +39,22 @@ if [[ ! -f third_party/ByteTrack/requirements.txt ]]; then
 fi
 pip install -r requirements.txt
 pip install -r third_party/ByteTrack/requirements.txt
+export PIP_PREFER_BINARY=1
 python -m pip install --only-binary=:all: onnxruntime-gpu || true
 python -m pip install --only-binary=:all: onnxruntime || true
+python - <<'PY'
+import platform, sys
+try:
+    import onnxruntime as ort
+    print("ORT:", ort.__version__, "providers:", ort.get_available_providers())
+    if platform.system() in ("Linux","Windows"):
+        assert "CUDAExecutionProvider" in ort.get_available_providers(), \
+            f"CUDAExecutionProvider not available: {ort.get_available_providers()}"
+    print("onnxruntime check: OK")
+except Exception as e:
+    print("onnxruntime check: FAIL:", e, file=sys.stderr)
+    sys.exit(1)
+PY
 pip install cython cython_bbox
 pip install 'git+https://github.com/cocodataset/cocoapi.git#subdirectory=PythonAPI'
 pip install loguru opencv-python-headless numpy

@@ -7,10 +7,9 @@ Minimal ByteTrack wrapper that tracks only COCO classes **0** (person) and **32*
 - Python 3.9+
 - ByteTrack cloned into `third_party/ByteTrack`
 
-### ONNX Runtime (GPU)
-- ONNX Runtime GPU wheels (>=1.19) are published on PyPI and require CUDA 12.x.
-- This project tests with CUDA 12.9 and `onnxruntime-gpu==1.22.1`.
-- macOS uses the CPU-only `onnxruntime` package.
+### ONNX Runtime
+- Linux/Windows use onnxruntime-gpu==1.22.0 (CUDA 12.x wheels).
+- macOS uses onnxruntime==1.22.1 (CPU).
 
 ## Setup
 ```bash
