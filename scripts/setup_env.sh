@@ -28,22 +28,68 @@ if [[ -z "${VIRTUAL_ENV:-}" ]]; then
   source .venv/bin/activate
 fi
 
-# Upgrade pip to avoid build issues.
-python -m pip install --upgrade pip
-
-# Install PyTorch with CUDA 12.4 only if not already available.
-if ! python - <<'PY'
+install_pytorch() {
+  set -euo pipefail
+  # 1) If torch already present, do nothing.
+  if python - <<'PY' 2>/dev/null; then
 import sys
-try:
-    import torch  # noqa: F401
-    sys.exit(0)
-except Exception:
-    sys.exit(1)
+import torch  # noqa
+sys.exit(0)
 PY
-then
-  python -m pip install "torch==2.8.*" "torchvision==0.23.*" \
-    --index-url https://download.pytorch.org/whl/cu124
-fi
+  then
+    echo "[setup] torch already installed"
+    return 0
+  fi
+
+  OS_NAME="$(uname -s || echo Unknown)"
+  WANT_CPU="0"
+  # 2) Honour CPU mode and macOS
+  if [ "${ALLOW_CPU_ORT:-0}" = "1" ] || [ "${FORCE_TORCH_CPU:-0}" = "1" ] || [ "$OS_NAME" = "Darwin" ]; then
+    WANT_CPU="1"
+  fi
+
+  # 3) If not forced to CPU, detect NVIDIA GPU
+  if [ "$WANT_CPU" = "0" ]; then
+    if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L 2>/dev/null | grep -q "GPU"; then
+      TORCH_MODE="cu124"
+    else
+      TORCH_MODE="cpu"
+    fi
+  else
+    TORCH_MODE="cpu"
+  fi
+
+  python -m pip install --upgrade pip
+  if [ "$TORCH_MODE" = "cu124" ]; then
+    echo "[setup] Installing PyTorch CUDA 12.4 wheels…"
+    if ! python -m pip install "torch==2.8.*" "torchvision==0.23.*" --index-url https://download.pytorch.org/whl/cu124; then
+      echo "[setup][warn] CUDA wheels install failed — falling back to CPU torch."
+      TORCH_MODE="cpu"
+    fi
+  fi
+
+  if [ "$TORCH_MODE" = "cpu" ]; then
+    echo "[setup] Installing PyTorch CPU wheels…"
+    python -m pip install "torch==2.8.*" "torchvision==0.23.*" --index-url https://download.pytorch.org/whl/cpu
+  fi
+
+  # 4) Sanity check (assert only for CUDA path)
+  if [ "$TORCH_MODE" = "cu124" ]; then
+    python - <<'PY'
+import torch
+assert torch.cuda.is_available(), "CUDA build of torch installed, but CUDA is not available at runtime"
+print("Torch CUDA OK", torch.__version__, torch.version.cuda)
+PY
+  else
+    python - <<'PY'
+import torch, platform
+print("Torch CPU OK", torch.__version__, "cuda_tag:", getattr(torch.version, "cuda", None))
+PY
+  fi
+}
+
+# main sequence
+install_pytorch
 
 # Project and ByteTrack dependencies.
 python -m pip install -r requirements.txt
