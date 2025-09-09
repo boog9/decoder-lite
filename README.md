@@ -85,6 +85,9 @@ warning is logged.
 
 ## Notes
 - Only COCO classes 0 and 32 are processed.
+- `scripts/setup_env.sh` removes stray `~ip` directories that can trigger
+  `pip` warnings about invalid distributions and reinstalls the build toolchain.
 - Torch with CUDA must be present before building ByteTrack. `make venv` installs
-  PyTorch with CUDA 12.1 wheels (compatible with CUDA 12.4 runtime); adjust the
+  PyTorch with CUDA 12.1 wheels (compatible with CUDA 12.4 runtime) and installs
+  ByteTrack in PEP 517 editable compat mode without dependencies; adjust the
   index URL in `scripts/setup_env.sh` for other CUDA versions.
