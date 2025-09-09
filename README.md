@@ -3,9 +3,9 @@
 Minimal ByteTrack wrapper that tracks only COCO classes **0** (person) and **32** (sports ball).
 
 ## Prerequisites
- - Ubuntu 22.04 with NVIDIA GPU (CUDA 12.x, tested with 12.9)
+- Ubuntu 22.04 with NVIDIA GPU (CUDA 12.x, tested with 12.9)
 - Python 3.9+
-- ByteTrack cloned into `third_party/ByteTrack`
+- ByteTrack vendor auto-synced into `third_party/ByteTrack` by the setup script
 
 ### ONNX Runtime
 - Linux/Windows: `onnxruntime-gpu==1.22.0` (CUDA 12.x wheels).
@@ -25,6 +25,9 @@ make venv
 # download YOLOX weights
 make weights
 ```
+`make venv` invokes `scripts/ensure_bytetrack.sh` which re-synchronizes the
+ByteTrack sources if they are incomplete before installing in develop mode.
+
 
 ## Usage
 ### Track a video
