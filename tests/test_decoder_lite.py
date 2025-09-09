@@ -53,3 +53,22 @@ def test_filter_by_classes() -> None:
     filtered = filter_by_classes(dets, keep)
     assert filtered.shape[0] == 2
     assert set(filtered[:, 5].astype(int)) == {0, 32}
+
+
+def test_predictor_mean_std_defaults() -> None:
+    class DummyExp:
+        num_classes = 1
+        test_size = (640, 640)
+
+    exp = DummyExp()
+    predictor = MODULE.Predictor(
+        model=object(),
+        exp=exp,
+        postprocess_fn=lambda *args, **kwargs: None,
+        preproc_fn=lambda *args, **kwargs: (args[0], 1.0),
+        device="cpu",
+        fp16=True,
+    )
+    assert predictor.mean == (0.485, 0.456, 0.406)
+    assert predictor.std == (0.229, 0.224, 0.225)
+    assert predictor._use_fp16 is False

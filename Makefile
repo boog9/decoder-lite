@@ -14,6 +14,10 @@
 FILE  ?= 0
 EXP   ?= third_party/ByteTrack/exps/custom/yolox_x_coco.py
 EXTRA ?=
+WEIGHTS ?= third_party/ByteTrack/pretrained/yolox_x.pth
+
+# Enforce FP32 by default; no --fp16 flag is present in the run arguments.
+RUN_ARGS ?= --save_result --device gpu --keep-classes 0,32 --no-display
 
 VENV_DIR := .venv
 PYTHON := $(VENV_DIR)/bin/python
@@ -36,7 +40,7 @@ weights:
 	bash scripts/download_yolox_weights.sh
 
 run:
-	python tools/decoder-lite.py -f "$(EXP)" -c third_party/ByteTrack/pretrained/yolox_x.pth --path "$(FILE)" --save_result --device gpu --keep-classes 0,32 --no-display $(EXTRA)
+	python tools/decoder-lite.py -f "$(EXP)" -c $(WEIGHTS) --path "$(FILE)" $(RUN_ARGS) $(EXTRA)
 
 test:
 	python scripts/post_install_check.py

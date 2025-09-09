@@ -153,8 +153,13 @@ def make_parser() -> argparse.ArgumentParser:
                         help="Video path or webcam id (default: 0).")
     parser.add_argument("--save_result", action="store_true",
                         help="Save annotated video and JSON results.")
-    parser.add_argument("--device", type=str, default="cpu",
-                        choices=["cpu", "gpu"], help="Inference device.")
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="cpu",
+        choices=["cpu", "gpu"],
+        help="Inference device.",
+    )
     # Flag kept for backward compatibility but ignored at runtime.
     parser.add_argument(
         "--fp16",
@@ -245,7 +250,14 @@ def main() -> None:
     if args.device == "gpu" and args.fuse:
         model = fuse_model(model)
 
-    predictor = Predictor(model, exp, postprocess, preproc, args.device)
+    predictor = Predictor(
+        model=model,
+        exp=exp,
+        postprocess_fn=postprocess,
+        preproc_fn=preproc,
+        device=args.device,
+        fp16=False,
+    )
     tracker = BYTETracker(
         track_thresh=args.track_thresh,
         track_buffer=args.track_buffer,
@@ -376,16 +388,37 @@ class Predictor:
         postprocess_fn,
         preproc_fn,
         device: str = "cpu",
+        fp16: bool = False,
     ) -> None:
         self.model = model
         self.exp = exp
         self.postprocess = postprocess_fn
         self.preproc = preproc_fn
         self.device = device
-        self.mean = exp.rgb_means
-        self.std = exp.std
+
+        # Use experiment-provided normalization values if available; otherwise fall back
+        # to standard ImageNet statistics.
+        rgb_means = getattr(exp, "rgb_means", None)
+        if rgb_means is None:
+            rgb_means = getattr(exp, "mean", None)
+        if rgb_means is None:
+            rgb_means = (0.485, 0.456, 0.406)
+        self.mean = tuple(float(x) for x in rgb_means)
+
+        std_vals = getattr(exp, "std", None)
+        if std_vals is None:
+            std_vals = getattr(exp, "rgb_stds", None)
+        if std_vals is None:
+            std_vals = (0.229, 0.224, 0.225)
+        self.std = tuple(float(x) for x in std_vals)
+
         self.num_classes = exp.num_classes
         self.test_size = exp.test_size
+
+        # Force FP32 regardless of the ``fp16`` flag.
+        self._use_fp16 = False
+        if fp16:
+            pass
 
     def inference(self, img, conf: float, nms: float):
         import torch
