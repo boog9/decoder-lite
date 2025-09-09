@@ -9,15 +9,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-.PHONY: venv weights run test
+.PHONY: clone venv weights run test
 FILE  ?= 0
 EXP   ?= third_party/ByteTrack/exps/custom/yolox_x_coco.py
 EXTRA ?=
 
-venv:
+clone:
+	bash scripts/clone_bytetrack.sh
+
+venv: clone
 	bash scripts/setup_env.sh
 
-weights:
+weights: clone
 	bash scripts/download_yolox_weights.sh
 
 run:
