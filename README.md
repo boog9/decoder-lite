@@ -19,20 +19,26 @@ Minimal ByteTrack wrapper that tracks only COCO classes **0** (person) and **32*
 make venv      # this runs scripts/setup_env.sh
 make doctor    # verify torch/yolox/onnxruntime-gpu
 ```
+This repository vendors ByteTrack under `third_party/ByteTrack` (it is **not** a git submodule).
+The setup script:
+1. clones ByteTrack if missing,
+2. installs build tools and PyTorch (CUDA 12.1 wheels),
+3. installs ByteTrack in editable mode with `--no-build-isolation`,
+4. installs ONNX Runtime GPU `==1.22.0` plus `onnx` and `onnxsim`.
+
+> Notes:
+> * Do **not** use `--index-url` globally for PyTorch wheels — we use `--extra-index-url` so other packages come from PyPI.
+> * Avoid mixing CPU and GPU ONNX Runtime on the same platform.
+> * We do not modify any `third_party/ByteTrack/*.py` sources.
 
 ## Setup
 ```bash
-# optional: create and activate venv
-python -m venv .venv && source .venv/bin/activate
-
-# install dependencies and build ByteTrack
-make venv
+make venv      # create venv, clone ByteTrack, install deps
 
 # download YOLOX weights
 make weights
 ```
-`make venv` invokes `scripts/ensure_bytetrack.sh` which re-synchronizes the
-ByteTrack sources if they are incomplete before installing in develop mode.
+`make venv` executes `scripts/setup_env.sh` which clones and installs ByteTrack in editable mode.
 
 
 ## Usage
@@ -70,5 +76,5 @@ warning is logged.
 ## Notes
 - Only COCO classes 0 and 32 are processed.
 - Torch with CUDA must be present before building ByteTrack. `make venv` installs
-  PyTorch with CUDA 12.4 automatically; for other CUDA versions adjust the
-  index URL in `scripts/setup_env.sh`.
+  PyTorch with CUDA 12.1 wheels (compatible with CUDA 12.4 runtime); adjust the
+  index URL in `scripts/setup_env.sh` for other CUDA versions.
