@@ -14,6 +14,12 @@ Minimal ByteTrack wrapper that tracks only COCO classes **0** (person) and **32*
 - `scripts/setup_env.sh` installs `onnxruntime-gpu` on Linux/Windows and only
   falls back to the CPU wheel if the GPU wheel is unavailable.
 
+### Install on Python 3.13 (CUDA 12.x)
+```bash
+make venv      # this runs scripts/setup_env.sh
+make doctor    # verify torch/yolox/onnxruntime-gpu
+```
+
 ## Setup
 ```bash
 # optional: create and activate venv

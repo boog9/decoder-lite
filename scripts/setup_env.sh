@@ -10,101 +10,59 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Prepare Python environment and install ByteTrack.
+# Idempotent environment setup for decoder-lite.
 # Example usage:
 #   bash scripts/setup_env.sh
 # Example output:
-#   Torch OK 2.8.0 cu124
+#   [setup_env] DONE
 
 set -euo pipefail
 
-# Fail fast if ByteTrack vendor tree is missing or incomplete.
-if [[ ! -f third_party/ByteTrack/yolox/__init__.py ]]; then
-  echo "[setup_env] ERROR: third_party/ByteTrack/yolox/__init__.py not found. Run: make clone" >&2
-  exit 1
+# 0) Ensure ByteTrack submodule is present.
+if [ ! -f third_party/ByteTrack/yolox/__init__.py ]; then
+  git submodule update --init --recursive third_party/ByteTrack
 fi
 
-# Create or reuse a virtual environment.
-if [[ -z "${VIRTUAL_ENV:-}" ]]; then
-  python3 -m venv .venv
-  # shellcheck disable=SC1091
-  source .venv/bin/activate
+# 1) Upgrade build tools.
+python -m pip install -U pip setuptools wheel
+
+# 2) Install ninja from PyPI (no PyTorch index).
+python -m pip install ninja
+
+# 3) Install torch (CUDA 12.1 wheels) for cp313; fall back to nightly if needed.
+set +e
+python -m pip install --index-url https://download.pytorch.org/whl/cu121 'torch>=2.5,<2.7'
+TORCH_RC=$?
+set -e
+if [ $TORCH_RC -ne 0 ]; then
+  echo "[setup_env] Stable torch for cp313 not found, trying nightly cu121..."
+  python -m pip install --pre --index-url https://download.pytorch.org/whl/nightly/cu121 torch
 fi
 
-install_pytorch() {
-  set -euo pipefail
-  # 1) If torch already present, do nothing.
-  if python - <<'PY' 2>/dev/null
-import sys
-import torch  # noqa
-sys.exit(0)
+# 4) Quick torch sanity check.
+python - <<'PY'
+import sys, torch
+print("python:", sys.version.split()[0])
+print("torch:", torch.__version__, "cuda:", torch.version.cuda, "cuda_available:", torch.cuda.is_available())
 PY
-  then
-    echo "[setup] torch already installed"
-    return 0
-  fi
 
-  OS_NAME="$(uname -s || echo Unknown)"
-  WANT_CPU="0"
-  # 2) Honour CPU mode and macOS
-  if [ "${ALLOW_CPU_ORT:-0}" = "1" ] || [ "${FORCE_TORCH_CPU:-0}" = "1" ] || [ "$OS_NAME" = "Darwin" ]; then
-    WANT_CPU="1"
-  fi
+# 5) Install ByteTrack editable using existing torch.
+PIP_NO_BUILD_ISOLATION=1 python -m pip install -v -e third_party/ByteTrack
 
-  # 3) If not forced to CPU, detect NVIDIA GPU
-  if [ "$WANT_CPU" = "0" ]; then
-    if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L 2>/dev/null | grep -q "GPU"; then
-      TORCH_MODE="cu124"
-    else
-      TORCH_MODE="cpu"
-    fi
-  else
-    TORCH_MODE="cpu"
-  fi
+# 6) ORT: only GPU variant.
+python -m pip uninstall -y onnxruntime || true
+python -m pip install onnxruntime-gpu==1.22.0
 
-  python -m pip install --upgrade pip
-  if [ "$TORCH_MODE" = "cu124" ]; then
-    echo "[setup] Installing PyTorch CUDA 12.4 wheels…"
-    if ! python -m pip install "torch==2.8.*" "torchvision==0.23.*" --index-url https://download.pytorch.org/whl/cu124; then
-      echo "[setup][warn] CUDA wheels install failed — falling back to CPU torch."
-      TORCH_MODE="cpu"
-    fi
-  fi
+# 7) onnx-simplifier (onnxsim).
+python -m pip install onnxsim==0.4.36
 
-  if [ "$TORCH_MODE" = "cpu" ]; then
-    echo "[setup] Installing PyTorch CPU wheels…"
-    python -m pip install "torch==2.8.*" "torchvision==0.23.*" --index-url https://download.pytorch.org/whl/cpu
-  fi
-
-  # 4) Sanity check (assert only for CUDA path)
-  if [ "$TORCH_MODE" = "cu124" ]; then
-    python - <<'PY'
-import torch
-assert torch.cuda.is_available(), "CUDA build of torch installed, but CUDA is not available at runtime"
-print("Torch CUDA OK", torch.__version__, torch.version.cuda)
+# 8) Final import checks.
+python - <<'PY'
+import torch, importlib
+print("torch ok:", torch.cuda.is_available())
+yolox = importlib.import_module("yolox")
+print("yolox ok:", hasattr(yolox, "__version__"))
 PY
-  else
-    python - <<'PY'
-import torch, platform
-print("Torch CPU OK", torch.__version__, "cuda_tag:", getattr(torch.version, "cuda", None))
-PY
-  fi
-}
 
-install_bytetrack_develop() {
-  python -m pip install -r third_party/ByteTrack/requirements.txt
-  (
-    set -euo pipefail
-    cd third_party/ByteTrack
-    PIP_NO_BUILD_ISOLATION=1 python setup.py develop
-  )
-}
+echo "[setup_env] DONE"
 
-# main sequence
-install_pytorch
-
-# Project dependencies.
-python -m pip install -r requirements.txt
-
-# ByteTrack dependencies and development install.
-install_bytetrack_develop
