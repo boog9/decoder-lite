@@ -18,16 +18,26 @@
 
 set -euo pipefail
 
-# 0) Ensure ByteTrack submodule is present.
+# 0) Ensure ByteTrack sources are present.
 if [ ! -f third_party/ByteTrack/yolox/__init__.py ]; then
-  git submodule update --init --recursive third_party/ByteTrack
+  if git submodule status third_party/ByteTrack >/dev/null 2>&1; then
+    git submodule update --init --recursive third_party/ByteTrack
+  else
+    bash scripts/clone_bytetrack.sh
+  fi
+fi
+
+# Re-validate ByteTrack sources after sync/clone.
+if [ ! -f third_party/ByteTrack/yolox/__init__.py ]; then
+  echo "[setup_env] ByteTrack sources missing in third_party/ByteTrack" >&2
+  exit 1
 fi
 
 # 1) Upgrade build tools.
 python -m pip install -U pip setuptools wheel
 
-# 2) Install ninja from PyPI (no PyTorch index).
-python -m pip install ninja
+# 2) Install ninja from PyPI (avoid PyTorch index).
+python -m pip install --index-url https://pypi.org/simple ninja
 
 # 3) Install torch (CUDA 12.1 wheels) for cp313; fall back to nightly if needed.
 set +e
