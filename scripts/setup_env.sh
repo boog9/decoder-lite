@@ -18,8 +18,11 @@
 
 set -euo pipefail
 
-# Ensure ByteTrack vendor tree is present before installation.
-bash scripts/ensure_bytetrack.sh
+# Fail fast if ByteTrack vendor tree is missing or incomplete.
+if [[ ! -f third_party/ByteTrack/yolox/__init__.py ]]; then
+  echo "[setup_env] ERROR: third_party/ByteTrack/yolox/__init__.py not found. Run: make clone" >&2
+  exit 1
+fi
 
 # Create or reuse a virtual environment.
 if [[ -z "${VIRTUAL_ENV:-}" ]]; then
@@ -88,10 +91,20 @@ PY
   fi
 }
 
+install_bytetrack_develop() {
+  python -m pip install -r third_party/ByteTrack/requirements.txt
+  (
+    set -euo pipefail
+    cd third_party/ByteTrack
+    PIP_NO_BUILD_ISOLATION=1 python setup.py develop
+  )
+}
+
 # main sequence
 install_pytorch
 
-# Project and ByteTrack dependencies.
+# Project dependencies.
 python -m pip install -r requirements.txt
-python -m pip install -r third_party/ByteTrack/requirements.txt
-PIP_NO_BUILD_ISOLATION=1 python third_party/ByteTrack/setup.py develop
+
+# ByteTrack dependencies and development install.
+install_bytetrack_develop
