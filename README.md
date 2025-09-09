@@ -56,4 +56,6 @@ Results are written to `outputs/videos/result.mp4` and logs to `outputs/logs/res
 
 ## Notes
 - Only COCO classes 0 and 32 are processed.
-- Torch with CUDA must already be installed in the environment.
+- Torch with CUDA must be present before building ByteTrack. `make venv` installs
+  PyTorch with CUDA 12.4 automatically; for other CUDA versions adjust the
+  index URL in `scripts/setup_env.sh`.

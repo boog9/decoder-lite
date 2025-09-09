@@ -38,11 +38,29 @@ if [[ ! -f third_party/ByteTrack/requirements.txt ]]; then
   exit 1
 fi
 pip install -r requirements.txt
-pip install -r third_party/ByteTrack/requirements.txt
 
 OS="$(uname -s)"
 : "${PIP_PREFER_BINARY:=1}"
 export PIP_PREFER_BINARY
+
+install_pytorch_cu124() {
+  if python -c "import torch, sys; print(torch.__version__); sys.exit(0)" >/dev/null 2>&1; then
+    echo "[setup_env] PyTorch already installed"
+  else
+    python -m pip install --upgrade pip
+    python -m pip install "torch==2.8.*" "torchvision==0.23.*" --index-url https://download.pytorch.org/whl/cu124
+  fi
+  python - <<'PY'
+import torch
+assert torch.cuda.is_available()
+print('Torch OK', torch.__version__, torch.version.cuda)
+PY
+}
+
+install_bytetrack_develop() {
+  python -m pip install -r third_party/ByteTrack/requirements.txt
+  PIP_NO_BUILD_ISOLATION=1 python third_party/ByteTrack/setup.py develop
+}
 
 install_gpu_ort() {
   python -m pip install --only-binary=:all: "onnxruntime-gpu==1.22.0"
@@ -96,6 +114,5 @@ pip install cython cython_bbox
 pip install 'git+https://github.com/cocodataset/cocoapi.git#subdirectory=PythonAPI'
 pip install loguru opencv-python-headless numpy
 
-pushd third_party/ByteTrack >/dev/null
-python setup.py develop
-popd >/dev/null
+install_pytorch_cu124
+install_bytetrack_develop
