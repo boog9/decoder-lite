@@ -85,7 +85,17 @@ python scripts/verify_torchvision_nms.py --quiet || {
 # 5) Install runtime dependencies for ByteTrack (avoid requirements.txt)
 if [[ "${MODE}" != "--vision-only" ]]; then
   echo "[setup_env] Installing runtime dependencies for ByteTrack ..."
-  python -m pip install -U "numpy<2.3" opencv-python loguru "easydict>=1.10" "scikit-image<0.25" thop motmetrics
+  python -m pip install -U \
+    "numpy<2.3" \
+    opencv-python \
+    loguru \
+    "easydict>=1.10" \
+    "scikit-image<0.25" \
+    thop \
+    motmetrics \
+    tabulate \
+    tqdm \
+    pycocotools
   # Try to install the faster 'lap'; fall back to 'lapx' if wheels are missing
   python -m pip install lap || python -m pip install lapx
   echo "[setup_env] Installing ByteTrack in editable mode ..."

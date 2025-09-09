@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
+import time
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Set
 
@@ -198,7 +200,21 @@ def main() -> None:
     from yolox.utils import fuse_model, get_model_info, postprocess
     from yolox.data.data_augment import preproc
     from yolox.utils.visualize import plot_tracking
-    from yolox.utils import Timer
+    try:
+        # Старі гілки YOLOX мали Timer у yolox.utils; якщо є — використовуємо.
+        from yolox.utils import Timer  # type: ignore
+    except Exception:
+        # Фолбек-сумісність: простий таймер з tic()/toc() для логування/замірів.
+        class Timer:
+            def __init__(self) -> None:
+                self._t0: Optional[float] = None
+
+            def tic(self) -> None:
+                self._t0 = time.perf_counter()
+
+            def toc(self) -> float:
+                t0 = self._t0 or time.perf_counter()
+                return time.perf_counter() - t0
     from yolox.tracker.byte_tracker import BYTETracker
     import cv2
     import torch
