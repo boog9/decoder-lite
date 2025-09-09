@@ -73,8 +73,16 @@ python scripts/verify_torchvision_nms.py --quiet || {
 if [[ "${MODE}" != "--vision-only" ]]; then
   echo "[setup_env] Installing project and ByteTrack dependencies ..."
   if [[ -f third_party/ByteTrack/requirements.txt ]]; then
-    python -m pip install -r third_party/ByteTrack/requirements.txt
+    # Keep PyTorch stack intact; other deps from PyPI; do not fail the whole setup
+    # if onnx-simplifier/onnxsim is inconsistent on Py3.13.
+    python -m pip install -r third_party/ByteTrack/requirements.txt || true
   fi
+  # ByteTrack imports 'thop' unconditionally in yolox/utils/model_utils.py
+  # Install it explicitly without deps to avoid touching torch/vision.
+  python -m pip install --no-deps "thop==0.1.1.post2209072238"
+  # Useful at runtime; harmless if already present
+  python -m pip install -U loguru opencv-python
+  # Editable install of ByteTrack WITHOUT changing its sources
   python -m pip install -e third_party/ByteTrack
 fi
 

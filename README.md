@@ -13,6 +13,9 @@ Minimal ByteTrack wrapper that tracks only COCO classes **0** (person) and **32*
 - ONNX simplifier package name is `onnxsim>=0.4.36,<0.5` (previously `onnx-simplifier`).
 - `scripts/setup_env.sh` installs `onnxruntime-gpu` on Linux/Windows and only
   falls back to the CPU wheel if the GPU wheel is unavailable.
+- If `onnxsim` fails to install on Python 3.13, the setup script proceeds and
+  installs `thop`, `loguru`, and `opencv-python` separately to satisfy ByteTrack
+  imports.
 
 ### Torch/Torchvision (CUDA 12.x, Python 3.13)
 For Python 3.13 on CUDA 12.x we install **torch 2.5.1+cu121** from the official PyTorch index and **build torchvision 0.20.1 from source with CUDA**. Prebuilt cp313 wheels for torchvision 0.20.1 with cu121 are not published; CPU wheels miss C++/CUDA ops (e.g., `torchvision::nms`), leading to runtime errors in ByteTrack/YOLOX.
