@@ -31,7 +31,7 @@ fi
 install_pytorch() {
   set -euo pipefail
   # 1) If torch already present, do nothing.
-  if python - <<'PY' 2>/dev/null; then
+  if python - <<'PY' 2>/dev/null
 import sys
 import torch  # noqa
 sys.exit(0)
