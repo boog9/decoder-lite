@@ -91,3 +91,5 @@ warning is logged.
   PyTorch with CUDA 12.1 wheels (compatible with CUDA 12.4 runtime) and installs
   ByteTrack in PEP 517 editable compat mode without dependencies; adjust the
   index URL in `scripts/setup_env.sh` for other CUDA versions.
+- The setup script installs `cython-bbox`, required for bounding box overlap
+  computations in ByteTrack.
