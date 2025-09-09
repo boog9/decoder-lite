@@ -40,8 +40,15 @@ fi
 pip install -r requirements.txt
 pip install -r third_party/ByteTrack/requirements.txt
 export PIP_PREFER_BINARY=1
-python -m pip install --only-binary=:all: onnxruntime-gpu || true
-python -m pip install --only-binary=:all: onnxruntime || true
+if [[ "$(uname)" == "Darwin" ]]; then
+  # macOS uses the CPU-only wheel
+  python -m pip install --only-binary=:all: onnxruntime || true
+else
+  # Attempt GPU wheel; fall back to CPU if unavailable
+  if ! python -m pip install --only-binary=:all: onnxruntime-gpu; then
+    python -m pip install --only-binary=:all: onnxruntime || true
+  fi
+fi
 python - <<'PY'
 import platform, sys
 try:

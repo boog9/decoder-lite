@@ -10,6 +10,8 @@ Minimal ByteTrack wrapper that tracks only COCO classes **0** (person) and **32*
 ### ONNX Runtime
 - Linux/Windows use onnxruntime-gpu==1.22.0 (CUDA 12.x wheels).
 - macOS uses onnxruntime==1.22.1 (CPU).
+- `scripts/setup_env.sh` installs `onnxruntime-gpu` on Linux/Windows and
+  only falls back to the CPU wheel if the GPU wheel is unavailable.
 
 ## Setup
 ```bash
