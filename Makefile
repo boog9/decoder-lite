@@ -36,7 +36,7 @@ weights:
 	bash scripts/download_yolox_weights.sh
 
 run:
-	python tools/decoder-lite.py -f "$(EXP)" -c third_party/ByteTrack/pretrained/yolox_x.pth --path "$(FILE)" --save_result --device gpu --fp16 --keep-classes 0,32 --no-display $(EXTRA)
+	python tools/decoder-lite.py -f "$(EXP)" -c third_party/ByteTrack/pretrained/yolox_x.pth --path "$(FILE)" --save_result --device gpu --keep-classes 0,32 --no-display $(EXTRA)
 
 test:
 	python scripts/post_install_check.py
