@@ -31,18 +31,24 @@ import json
 from pathlib import Path
 from typing import Iterable, List, Set
 
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("decoder-lite")
+
 try:
     import numpy as np
 except ModuleNotFoundError:  # pragma: no cover
     np = None
 
 try:
-    from loguru import logger
+    from loguru import logger as loguru_logger
+    logger = loguru_logger
 except ModuleNotFoundError:  # pragma: no cover
-    import logging
-
-    logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger("decoder-lite")
+    # Optional: можна лишити порожньою або залогувати через вже ініціалізований logger
+    logger.warning(
+        "Optional dependencies are missing; limited functionality may apply."
+    )
 
 
 def parse_keep(arg: str) -> List[int]:
@@ -65,8 +71,8 @@ def filter_by_classes(dets: np.ndarray, keep: Iterable[int]) -> np.ndarray:
     """Filter detection array by class ids.
 
     Args:
-        dets: Detection array of shape [N, M]. Last column or column 5 contains
-            integer class ids.
+        dets: Detection array ``[N, M]`` with integer class ids in the last
+            column (requires ``M >= 6``).
         keep: Iterable of class ids to keep.
 
     Returns:
@@ -76,11 +82,63 @@ def filter_by_classes(dets: np.ndarray, keep: Iterable[int]) -> np.ndarray:
         raise ModuleNotFoundError("numpy is required for filter_by_classes")
     if dets.size == 0:
         return dets
+    if dets.shape[1] < 6:
+        return dets
     keep_set: Set[int] = set(keep)
-    cls_col = dets.shape[1] - 1 if dets.shape[1] >= 6 else 5
+    cls_col = dets.shape[1] - 1
     cls_ids = dets[:, cls_col].astype(int)
     mask = np.isin(cls_ids, list(keep_set))
     return dets[mask]
+
+
+def normalize_dets(
+    dets: np.ndarray,
+    img_info: dict,
+    keep: Iterable[int] | None = None,
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """Normalize detection arrays for ``BYTETracker.update``.
+
+    Args:
+        dets: Detection array of shape ``[N, M]``.
+        img_info: Dict containing at least ``"ratio"``.
+        keep: Optional iterable of class ids to retain.
+
+    Returns:
+        Tuple ``(dets_in, cls_ids)``:
+        - ``dets_in`` — ``[N, 5]`` as ``[x1, y1, x2, y2, score]`` ready for
+          ``BYTETracker.update``.
+        - ``cls_ids`` — optional array of class ids or ``None`` if unavailable.
+    """
+
+    if np is None:
+        raise ModuleNotFoundError("numpy is required for normalize_dets")
+
+    # Work on a copy to avoid mutating the caller's array
+    dets = dets.copy()
+
+    # Rescale boxes back to original frame size
+    dets[:, :4] /= img_info["ratio"]
+
+    cls_ids = None
+    if dets.shape[1] >= 7:
+        cls_ids = dets[:, 6].astype(np.int32)
+        score = dets[:, 4] * dets[:, 5]
+    else:
+        score = dets[:, 4]
+
+    if cls_ids is not None and keep is not None:
+        mask = np.isin(cls_ids, list(keep))
+        dets = dets[mask]
+        score = score[mask]
+        cls_ids = cls_ids[mask]
+
+    dets_in = np.column_stack([dets[:, :4], score])
+    if dets_in.ndim != 2 or dets_in.shape[1] != 5:
+        raise ValueError(
+            f"BYTETracker expects Nx5 [x1,y1,x2,y2,score], got shape {dets_in.shape}"
+        )
+
+    return dets_in, cls_ids
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -194,56 +252,58 @@ def main() -> None:
         if outputs[0] is not None:
             dets = outputs[0].cpu().numpy()
             dets_before = dets.shape[0]
-            dets = filter_by_classes(dets, keep_classes)
-            logger.info(f"Frame {frame_id}: kept {dets.shape[0]}/{dets_before} detections")
-            if dets.shape[0] > 0:
-                dets[:, :4] /= img_info["ratio"]
-                if dets.shape[1] >= 7:
-                    scores = (dets[:, 4] * dets[:, 5])[:, None]
+            if dets_before > 0:
+                dets_in, _ = normalize_dets(dets, img_info, keep_classes)
+                logger.info(
+                    f"Frame {frame_id}: kept {dets_in.shape[0]}/{dets_before} detections (after class filter and rescale)"
+                )
+                if dets_in.shape[0] > 0:
+                    online_targets = tracker.update(
+                        dets_in,
+                        [img_info["height"], img_info["width"]],
+                        exp.test_size,
+                    )
+
+                    online_tlwhs: List[List[float]] = []
+                    online_ids: List[int] = []
+                    online_scores: List[float] = []
+                    for t in online_targets:
+                        tlwh = t.tlwh
+                        if tlwh[2] * tlwh[3] > args.min_box_area:
+                            online_tlwhs.append(tlwh)
+                            online_ids.append(t.track_id)
+                            online_scores.append(t.score)
+                    timer.toc()
+                    online_im = plot_tracking(
+                        img_info["raw_img"],
+                        online_tlwhs,
+                        online_ids,
+                        frame_id=frame_id,
+                        fps=1.0 / timer.average_time,
+                        scores=online_scores,
+                        cls_ids=None,
+                    )
+                    if args.save_result:
+                        writer.write(online_im)
+                        records.append(
+                            {
+                                "frame": frame_id,
+                                "tlwh": [
+                                    list(map(float, tlwh)) for tlwh in online_tlwhs
+                                ],
+                                "id": online_ids,
+                                "score": online_scores,
+                            }
+                        )
+                    if not args.no_display:
+                        cv2.imshow("ByteTrack", online_im)
                 else:
-                    scores = dets[:, 4:5]
-                dets5 = np.concatenate([dets[:, :4], scores], axis=1)
-                online_targets = tracker.update(
-                    dets5,
-                    [img_info["height"], img_info["width"]],
-                    exp.test_size,
-                )
-                online_tlwhs = []
-                online_ids = []
-                online_scores = []
-                online_cls = []
-                for t in online_targets:
-                    tlwh = t.tlwh
-                    if tlwh[2] * tlwh[3] > args.min_box_area:
-                        online_tlwhs.append(tlwh)
-                        online_ids.append(t.track_id)
-                        online_scores.append(t.score)
-                        if hasattr(t, "cls"):
-                            online_cls.append(int(getattr(t, "cls")))
-                timer.toc()
-                cls_ids_arg = (
-                    online_cls if len(online_cls) == len(online_ids) and len(online_cls) > 0 else None
-                )
-                online_im = plot_tracking(
-                    img_info["raw_img"],
-                    online_tlwhs,
-                    online_ids,
-                    frame_id=frame_id,
-                    fps=1.0 / timer.average_time,
-                    scores=online_scores,
-                    cls_ids=cls_ids_arg,
-                )
-                if args.save_result:
-                    writer.write(online_im)
-                    records.append({
-                        "frame": frame_id,
-                        "tlwh": [list(map(float, tlwh)) for tlwh in online_tlwhs],
-                        "id": online_ids,
-                        "cls": online_cls,
-                        "score": online_scores,
-                    })
-                if not args.no_display:
-                    cv2.imshow("ByteTrack", online_im)
+                    timer.toc()
+                    blank = img_info["raw_img"]
+                    if args.save_result:
+                        writer.write(blank)
+                    if not args.no_display:
+                        cv2.imshow("ByteTrack", blank)
             else:
                 timer.toc()
                 blank = img_info["raw_img"]
