@@ -20,10 +20,10 @@ PYTHON := $(VENV_DIR)/bin/python
 PIP := $(VENV_DIR)/bin/pip
 
 clone:
-        bash scripts/clone_bytetrack.sh
+	bash scripts/clone_bytetrack.sh
 
 venv:
-        @bash scripts/setup_env.sh
+	@bash scripts/setup_env.sh
 
 doctor:
 	. $(VENV_DIR)/bin/activate && $(PYTHON) scripts/doctor.py
@@ -41,3 +41,4 @@ test:
 .PHONY: ort-check
 ort-check:
 	python -c 'import onnxruntime as ort; print(ort.__version__, ort.get_available_providers())'
+
