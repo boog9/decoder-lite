@@ -19,7 +19,23 @@ if [[ -z "${VIRTUAL_ENV:-}" ]]; then
   source .venv/bin/activate
 fi
 
+# Warn about very new Python versions (e.g., 3.12/3.13) that may conflict with dependencies.
+PYV=$(python <<'PY'
+import sys
+print(f"{sys.version_info.major}.{sys.version_info.minor}")
+PY
+)
+case "$PYV" in
+  3.12|3.13*)
+    echo "[setup_env] WARNING: Detected Python $PYV. Some packages in YOLOX/ByteTrack may not support it well. Python 3.10–3.11 is recommended."
+    ;;
+esac
+
 pip install -U pip wheel
+if [[ ! -f third_party/ByteTrack/requirements.txt ]]; then
+  echo "[setup_env] ERROR: third_party/ByteTrack/requirements.txt not found. Run: make clone"
+  exit 1
+fi
 pip install -r third_party/ByteTrack/requirements.txt
 pip install cython cython_bbox
 pip install 'git+https://github.com/cocodataset/cocoapi.git#subdirectory=PythonAPI'

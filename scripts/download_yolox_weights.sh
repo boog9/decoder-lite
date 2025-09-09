@@ -12,10 +12,60 @@
 
 set -euo pipefail
 
-YOLOX_URL="${YOLOX_URL:-https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.0rc0/yolox_x.pth}"
+# Usage:
+#   YOLOX_VARIANT=x make weights
+#   YOLOX_URL=<custom> make weights
+#   (by default yolox_x.pth is downloaded)
+
 DEST_DIR="third_party/ByteTrack/pretrained"
 mkdir -p "${DEST_DIR}"
 
-if [[ ! -f "${DEST_DIR}/yolox_x.pth" ]]; then
-  wget -L -O "${DEST_DIR}/yolox_x.pth" "${YOLOX_URL}"
+VARIANT="${YOLOX_VARIANT:-x}"   # x|l|m|s|tiny|nano
+FN="yolox_${VARIANT}.pth"
+OUT="${DEST_DIR}/${FN}"
+
+# Minimum file size thresholds for basic integrity check (bytes)
+case "${VARIANT}" in
+  x)   MIN_BYTES=$((600*1024*1024));;
+  l)   MIN_BYTES=$((140*1024*1024));;
+  m)   MIN_BYTES=$((70*1024*1024));;
+  s)   MIN_BYTES=$((60*1024*1024));;
+  tiny) MIN_BYTES=$((35*1024*1024));;
+  nano) MIN_BYTES=$((5*1024*1024));;
+  *) echo "[weights] ERROR: unknown YOLOX_VARIANT='${VARIANT}'"; exit 1;;
+esac
+
+# Sources: (1) custom URL (2) SourceForge mirror (verified)
+URLS=()
+if [[ -n "${YOLOX_URL:-}" ]]; then
+  URLS+=("${YOLOX_URL}")
+fi
+URLS+=("https://sourceforge.net/projects/yolox.mirror/files/0.1.0/${FN}/download")
+
+download_ok=false
+for U in "${URLS[@]}"; do
+  echo "[weights] Trying: ${U}"
+  if wget -q -L -O "${OUT}.tmp" "${U}" || curl -fL --output "${OUT}.tmp" "${U}"; then
+    if [[ -f "${OUT}.tmp" ]]; then
+      SIZE=$(stat -c%s "${OUT}.tmp" 2>/dev/null || echo 0)
+      if [[ "${SIZE}" -ge "${MIN_BYTES}" ]]; then
+        mv -f "${OUT}.tmp" "${OUT}"
+        echo "[weights] Saved ${OUT} (${SIZE} bytes)"
+        download_ok=true
+        break
+      else
+        echo "[weights] Downloaded file too small (${SIZE} < ${MIN_BYTES}), trying next URL..."
+        rm -f "${OUT}.tmp"
+      fi
+    fi
+  else
+    echo "[weights] Failed to download from ${U}, trying next..."
+    rm -f "${OUT}.tmp" || true
+  fi
+done
+
+if [[ "${download_ok}" != "true" ]]; then
+  echo "[weights] ERROR: could not download ${FN}. Try setting YOLOX_URL to a working mirror."
+  echo "Example (YOLOX-s): YOLOX_VARIANT=s make weights"
+  exit 1
 fi
