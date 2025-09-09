@@ -89,6 +89,8 @@ warning is logged.
 - Experiments lacking `rgb_means`/`std` fall back to ImageNet values `(0.485, 0.456, 0.406)` and `(0.229, 0.224, 0.225)`.
 - The tracker automatically detects old/new ByteTrack APIs and adapts the `BYTETracker`
   constructor call accordingly.
+- `Predictor` automatically adapts to different YOLOX/ByteTrack `postprocess`
+  function signatures (``class_agnostic``, ``agnostic``, or positional).
 - `scripts/setup_env.sh` removes stray `~ip` directories that can trigger
   `pip` warnings about invalid distributions and reinstalls the build toolchain.
 - Torch with CUDA must be present before building ByteTrack. `make venv` installs

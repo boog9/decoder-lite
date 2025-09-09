@@ -72,3 +72,66 @@ def test_predictor_mean_std_defaults() -> None:
     assert predictor.mean == (0.485, 0.456, 0.406)
     assert predictor.std == (0.229, 0.224, 0.225)
     assert predictor._use_fp16 is False
+
+
+@pytest.mark.parametrize(
+    "variant", ["class_agnostic", "agnostic", "positional5", "positional4"]
+)
+def test_inference_postprocess_variants(variant: str) -> None:
+    torch = pytest.importorskip("torch")
+    import numpy as np
+
+    class DummyExp:
+        num_classes = 1
+        test_size = (2, 2)
+
+    class DummyModel:
+        def __call__(self, inp: torch.Tensor) -> str:
+            return "out"
+
+    record = {}
+
+    def make_pp(name: str):
+        if name == "class_agnostic":
+            def pp(pred, num_classes, conf, nms, class_agnostic=False):
+                record["args"] = (pred, num_classes, conf, nms, class_agnostic)
+                return pred
+
+            return pp
+        if name == "agnostic":
+            def pp(pred, num_classes, conf, nms, agnostic=False):
+                record["args"] = (pred, num_classes, conf, nms, agnostic)
+                return pred
+
+            return pp
+        if name == "positional5":
+            def pp(pred, num_classes, conf, nms, flag):
+                record["args"] = (pred, num_classes, conf, nms, flag)
+                return pred
+
+            return pp
+
+        def pp(pred, num_classes, conf, nms):
+            record["args"] = (pred, num_classes, conf, nms)
+            return pred
+
+        return pp
+
+    predictor = MODULE.Predictor(
+        model=DummyModel(),
+        exp=DummyExp(),
+        postprocess_fn=make_pp(variant),
+        preproc_fn=lambda img, *args: (img, 1.0),
+        device="cpu",
+    )
+    img = np.zeros((2, 2, 3), dtype=np.float32)
+    out, _ = predictor.inference(img, 0.5, 0.6)
+    assert out == "out"
+    args = record["args"]
+    assert args[1] == 1
+    assert args[2] == 0.5
+    assert args[3] == 0.6
+    if variant == "positional4":
+        assert len(args) == 4
+    else:
+        assert args[4] is True

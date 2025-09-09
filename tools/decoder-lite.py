@@ -33,7 +33,7 @@ import time
 import inspect
 from types import SimpleNamespace
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence, Set
+from typing import Any, Iterable, List, Optional, Sequence, Set
 
 import logging
 
@@ -449,8 +449,20 @@ class Predictor:
         if fp16:
             pass
 
-    def inference(self, img, conf: float, nms: float):
+    def inference(self, img: np.ndarray, conf: float, nms: float) -> tuple[Any, dict]:
+        """Run model inference and apply post-processing.
+
+        Args:
+            img: Input image array.
+            conf: Confidence threshold.
+            nms: Non-maximum suppression threshold.
+
+        Returns:
+            Tuple containing the processed outputs and image metadata.
+        """
+
         import torch
+
         img_info = {"raw_img": img, "height": img.shape[0], "width": img.shape[1]}
         img, ratio = self.preproc(img, self.test_size, self.mean, self.std)
         img = torch.from_numpy(img).unsqueeze(0)
@@ -458,9 +470,36 @@ class Predictor:
             img = img.cuda()
         with torch.no_grad():
             outputs = self.model(img)
-            outputs = self.postprocess(
-                outputs, self.num_classes, conf, nms, class_agnostic=True
-            )
+            # --- YOLOX/ByteTrack postprocess compatibility shim ---
+            pp = getattr(self, "postprocess", None)
+            if pp is None:
+                try:
+                    from yolox.utils import postprocess as pp  # type: ignore
+                except Exception as e:  # pragma: no cover
+                    raise RuntimeError("postprocess function not found") from e
+
+            try:
+                sig = inspect.signature(pp)
+                names = list(sig.parameters.keys())
+            except (TypeError, ValueError):
+                names = []
+
+            if "class_agnostic" in names:
+                outputs = pp(outputs, self.num_classes, conf, nms, class_agnostic=True)
+            elif "agnostic" in names:
+                outputs = pp(outputs, self.num_classes, conf, nms, agnostic=True)
+            else:
+                try:
+                    if len(names) >= 5:
+                        outputs = pp(outputs, self.num_classes, conf, nms, True)
+                    else:
+                        outputs = pp(outputs, self.num_classes, conf, nms)
+                except TypeError:
+                    try:
+                        outputs = pp(outputs, self.num_classes, conf, nms, True)
+                    except TypeError:
+                        outputs = pp(outputs, self.num_classes, conf, nms)
+            # --- end shim ---
         img_info["ratio"] = ratio
         return outputs, img_info
 
