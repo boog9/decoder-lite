@@ -9,70 +9,54 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-# Idempotent environment setup for decoder-lite.
+#
+# Decoder-lite environment bootstrap.
 # Example usage:
-#   bash scripts/setup_env.sh
+#   make venv
 # Example output:
-#   [setup_env] DONE
+#   [decoder-lite] Done.
 
 set -euo pipefail
 
-# 0) Ensure ByteTrack sources are present.
+# 0) Ensure ByteTrack sources are present (not a submodule in this repo).
 if [ ! -f third_party/ByteTrack/yolox/__init__.py ]; then
-  if git submodule status third_party/ByteTrack >/dev/null 2>&1; then
-    git submodule update --init --recursive third_party/ByteTrack
-  else
-    bash scripts/clone_bytetrack.sh
-  fi
+  bash scripts/clone_bytetrack.sh
 fi
 
-# Re-validate ByteTrack sources after sync/clone.
-if [ ! -f third_party/ByteTrack/yolox/__init__.py ]; then
-  echo "[setup_env] ByteTrack sources missing in third_party/ByteTrack" >&2
-  exit 1
-fi
+python -m venv .venv
+# shellcheck disable=SC1091
+source .venv/bin/activate
 
-# 1) Upgrade build tools.
+echo "[decoder-lite] Upgrading pip tooling…"
 python -m pip install -U pip setuptools wheel
 
-# 2) Install ninja from PyPI (avoid PyTorch index).
-python -m pip install --index-url https://pypi.org/simple ninja
+echo "[decoder-lite] Installing build prerequisites…"
+python -m pip install -U ninja cython "packaging>=24" pybind11
 
-# 3) Install torch (CUDA 12.1 wheels) for cp313; fall back to nightly if needed.
-set +e
-python -m pip install --index-url https://download.pytorch.org/whl/cu121 'torch>=2.5,<2.7'
-TORCH_RC=$?
-set -e
-if [ $TORCH_RC -ne 0 ]; then
-  echo "[setup_env] Stable torch for cp313 not found, trying nightly cu121..."
-  python -m pip install --pre --index-url https://download.pytorch.org/whl/nightly/cu121 torch
+echo "[decoder-lite] Installing PyTorch (cu121)…"
+python -m pip install --extra-index-url https://download.pytorch.org/whl/cu121 'torch>=2.5,<2.7'
+
+echo "[decoder-lite] Installing ByteTrack (editable, no deps, no build isolation)…"
+python -m pip install -e third_party/ByteTrack --no-deps --no-build-isolation --config-settings editable_mode=compat
+
+echo "[decoder-lite] Installing ONNX/ORT GPU stack…"
+python -m pip install 'onnxruntime-gpu==1.22.0' onnx onnxsim
+
+if [ -f requirements.txt ]; then
+  echo "[decoder-lite] Installing project requirements.txt…"
+  python -m pip install -U -r requirements.txt
 fi
 
-# 4) Quick torch sanity check.
+echo "[decoder-lite] Sanity check…"
 python - <<'PY'
-import sys, torch
-print("python:", sys.version.split()[0])
-print("torch:", torch.__version__, "cuda:", torch.version.cuda, "cuda_available:", torch.cuda.is_available())
+import sys, importlib.util
+import torch
+ok_cuda = torch.cuda.is_available()
+spec = importlib.util.find_spec("yolox")
+print("python", sys.version.split()[0])
+print("torch", torch.__version__, "cuda", torch.version.cuda, "cuda_available", ok_cuda)
+print("yolox origin", getattr(spec, "origin", None))
 PY
 
-# 5) Install ByteTrack editable using existing torch.
-PIP_NO_BUILD_ISOLATION=1 python -m pip install -v -e third_party/ByteTrack
-
-# 6) ORT: only GPU variant.
-python -m pip uninstall -y onnxruntime || true
-python -m pip install onnxruntime-gpu==1.22.0
-
-# 7) onnx-simplifier (onnxsim).
-python -m pip install onnxsim==0.4.36
-
-# 8) Final import checks.
-python - <<'PY'
-import torch, importlib
-print("torch ok:", torch.cuda.is_available())
-yolox = importlib.import_module("yolox")
-print("yolox ok:", hasattr(yolox, "__version__"))
-PY
-
-echo "[setup_env] DONE"
+echo "[decoder-lite] Done."
 

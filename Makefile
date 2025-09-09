@@ -19,14 +19,11 @@ VENV_DIR := .venv
 PYTHON := $(VENV_DIR)/bin/python
 PIP := $(VENV_DIR)/bin/pip
 
-$(VENV_DIR):
-	python3 -m venv $(VENV_DIR)
-
 clone:
-	bash scripts/clone_bytetrack.sh
+        bash scripts/clone_bytetrack.sh
 
-venv: $(VENV_DIR)
-	. $(VENV_DIR)/bin/activate && bash scripts/setup_env.sh
+venv:
+        @bash scripts/setup_env.sh
 
 doctor:
 	. $(VENV_DIR)/bin/activate && $(PYTHON) scripts/doctor.py

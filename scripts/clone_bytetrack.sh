@@ -9,38 +9,28 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+# Clone ByteTrack sources into third_party/ByteTrack.
+# Example usage:
+#   bash scripts/clone_bytetrack.sh
+# Example output:
+#   [clone_bytetrack] OK.
 
-# Clone ByteTrack into third_party/ByteTrack if missing.
 set -euo pipefail
 
-REPO_DIR="third_party/ByteTrack"
-# Офіційна інструкція радить клонувати ifzhang/ByteTrack (requirements.txt у корені).
-# Джерело: README ByteTrack — Step1. Install ByteTrack. (git clone https://github.com/ifzhang/ByteTrack.git)
-BYTETRACK_URL="${BYTETRACK_URL:-https://github.com/ifzhang/ByteTrack.git}"
-BYTETRACK_REV="${BYTETRACK_REV:-}"
-
-mkdir -p third_party
-if [[ -f "${REPO_DIR}/requirements.txt" ]]; then
-  echo "[clone_bytetrack] Found existing ${REPO_DIR} (requirements.txt present) — skipping clone."
+dst="third_party/ByteTrack"
+if [ -f "${dst}/yolox/__init__.py" ]; then
+  echo "[clone_bytetrack] ByteTrack already present."
   exit 0
 fi
 
-if [[ -d "${REPO_DIR}" ]]; then
-  echo "[clone_bytetrack] ${REPO_DIR} exists but no requirements.txt — removing and recloning..."
-  rm -rf "${REPO_DIR}"
-fi
+echo "[clone_bytetrack] Cloning ByteTrack sources…"
+rm -rf "${dst}"
+git clone --depth=1 https://github.com/FoundationVision/ByteTrack "${dst}"
 
-echo "[clone_bytetrack] Cloning ${BYTETRACK_URL} into ${REPO_DIR}..."
-git clone --depth 1 "${BYTETRACK_URL}" "${REPO_DIR}"
-if [[ -n "${BYTETRACK_REV}" ]]; then
-  echo "[clone_bytetrack] Checking out revision ${BYTETRACK_REV}..."
-  git -C "${REPO_DIR}" fetch --depth 1 origin "${BYTETRACK_REV}"
-  git -C "${REPO_DIR}" checkout -q "${BYTETRACK_REV}"
-fi
-
-if [[ ! -f "${REPO_DIR}/requirements.txt" ]]; then
-  echo "[clone_bytetrack] ERROR: requirements.txt not found in ${REPO_DIR}. Repository layout unexpected."
+if [ ! -f "${dst}/yolox/__init__.py" ]; then
+  echo "[clone_bytetrack] ERROR: yolox package not found after clone."
   exit 1
 fi
+echo "[clone_bytetrack] OK."
 
-echo "[clone_bytetrack] Done."
