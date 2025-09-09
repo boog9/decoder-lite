@@ -17,10 +17,11 @@ EXTRA ?=
 clone:
 	bash scripts/clone_bytetrack.sh
 
-venv: clone
+venv:
+	# Ensure ByteTrack is synced and install all dependencies.
 	bash scripts/setup_env.sh
 
-weights: clone
+weights:
 	bash scripts/download_yolox_weights.sh
 
 run:
