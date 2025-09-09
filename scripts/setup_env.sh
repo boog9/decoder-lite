@@ -47,8 +47,20 @@ if [[ "${MODE}" != "--vision-only" ]]; then
 fi
 
 # 1) Base build tools (from PyPI)
-python -m pip install -U pip setuptools wheel packaging
-python -m pip install -U ninja cython pybind11
+# Clean up broken pip artifacts that show up as "Ignoring invalid distribution ~ip"
+python - <<'PY'
+import site, glob, os, shutil
+for p in set(site.getsitepackages() + [site.getusersitepackages()]):
+    if not os.path.isdir(p):
+        continue
+    for bad in glob.glob(os.path.join(p, '*~ip*')):
+        try:
+            shutil.rmtree(bad, ignore_errors=True)
+        except Exception:
+            pass
+PY
+python -m pip install --force-reinstall --no-cache-dir "pip==25.2" "setuptools>=68" "wheel"
+python -m pip install -U packaging ninja cython pybind11
 
 # 2) Install Torch from the official CUDA 12.1 wheel index (GPU build)
 echo "[setup_env] Installing torch 2.5.1+cu121 ..."
@@ -82,8 +94,9 @@ if [[ "${MODE}" != "--vision-only" ]]; then
   python -m pip install --no-deps "thop==0.1.1.post2209072238"
   # Useful at runtime; harmless if already present
   python -m pip install -U loguru opencv-python
-  # Editable install of ByteTrack WITHOUT changing its sources
-  python -m pip install -e third_party/ByteTrack
+  # Editable install of ByteTrack WITHOUT changing its sources.
+  # Ensure torch is already present; use PEP 517 editable compat mode.
+  python -m pip install -e third_party/ByteTrack --no-deps --config-settings editable_mode=compat
 fi
 
 echo "[setup_env] Done."
