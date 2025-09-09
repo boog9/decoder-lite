@@ -57,6 +57,10 @@ The Makefile adds `--no-display` for headless execution. Remove the flag to view
 
 Results are written to `outputs/videos/result.mp4` and logs to `outputs/logs/result.json`.
 
+Use the `--keep-classes` flag to restrict tracking to specific class IDs. If the
+detector outputs only five columns (no class column), the flag is ignored and a
+warning is logged.
+
 ## Notes
 - Only COCO classes 0 and 32 are processed.
 - Torch with CUDA must be present before building ByteTrack. `make venv` installs

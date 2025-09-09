@@ -29,12 +29,13 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Iterable, List, Set
+from typing import Iterable, List, Optional, Sequence, Set
 
 import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("decoder-lite")
+_logger = logging.getLogger(__name__)
 
 try:
     import numpy as np
@@ -93,52 +94,50 @@ def filter_by_classes(dets: np.ndarray, keep: Iterable[int]) -> np.ndarray:
 
 def normalize_dets(
     dets: np.ndarray,
-    img_info: dict,
-    keep: Iterable[int] | None = None,
-) -> tuple[np.ndarray, np.ndarray | None]:
-    """Normalize detection arrays for ``BYTETracker.update``.
+    keep_classes: Optional[Sequence[int]] = None,
+) -> np.ndarray:
+    """Normalize detection tensor to ByteTrack-compatible shape (N,5).
 
     Args:
-        dets: Detection array of shape ``[N, M]``.
-        img_info: Dict containing at least ``"ratio"``.
-        keep: Optional iterable of class ids to retain.
+        dets: Detection array with shape (N,>=5).
+        keep_classes: Optional sequence of class IDs to retain.
 
     Returns:
-        Tuple ``(dets_in, cls_ids)``:
-        - ``dets_in`` — ``[N, 5]`` as ``[x1, y1, x2, y2, score]`` ready for
-          ``BYTETracker.update``.
-        - ``cls_ids`` — optional array of class ids or ``None`` if unavailable.
+        Array of shape (M,5) containing <x1,y1,x2,y2,score>.
+
+    Raises:
+        ValueError: If ``dets`` has fewer than five columns.
     """
 
-    if np is None:
-        raise ModuleNotFoundError("numpy is required for normalize_dets")
+    if dets is None or dets.size == 0:
+        return np.empty((0, 5), dtype=np.float32)
 
-    # Work on a copy to avoid mutating the caller's array
-    dets = dets.copy()
-
-    # Rescale boxes back to original frame size
-    dets[:, :4] /= img_info["ratio"]
-
-    cls_ids = None
-    if dets.shape[1] >= 7:
-        cls_ids = dets[:, 6].astype(np.int32)
-        score = dets[:, 4] * dets[:, 5]
-    else:
-        score = dets[:, 4]
-
-    if cls_ids is not None and keep is not None:
-        mask = np.isin(cls_ids, list(keep))
-        dets = dets[mask]
-        score = score[mask]
-        cls_ids = cls_ids[mask]
-
-    dets_in = np.column_stack([dets[:, :4], score])
-    if dets_in.ndim != 2 or dets_in.shape[1] != 5:
+    if dets.ndim != 2 or dets.shape[1] < 5:
         raise ValueError(
-            f"BYTETracker expects Nx5 [x1,y1,x2,y2,score], got shape {dets_in.shape}"
+            f"Expected dets with shape (N,>=5), got {getattr(dets, 'shape', None)}"
         )
 
-    return dets_in, cls_ids
+    num_cols = dets.shape[1]
+    cls_col: Optional[int] = None
+    if num_cols >= 7:
+        cls_col = 6
+    elif num_cols == 6:
+        cls_col = 5
+
+    if keep_classes:
+        if cls_col is not None:
+            cls_ids = dets[:, cls_col].astype(np.int64, copy=False)
+            mask = np.isin(
+                cls_ids, np.asarray(list(keep_classes), dtype=np.int64)
+            )
+            dets = dets[mask]
+        else:
+            _logger.warning(
+                "--keep-classes provided but inputs have no class column (5-col detections). Ignoring."
+            )
+
+    dets5 = dets[:, :5].astype(np.float32, copy=False)
+    return dets5
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -172,8 +171,15 @@ def make_parser() -> argparse.ArgumentParser:
                         help="Minimum box area.")
     parser.add_argument("--mot20", action="store_true",
                         help="Test on MOT20 dataset.")
-    parser.add_argument("--keep-classes", type=str, default="0,32",
-                        help="COCO class ids to keep, comma-separated.")
+    parser.add_argument(
+        "--keep-classes",
+        type=str,
+        default="0,32",
+        help=(
+            "COCO class ids to keep, comma-separated. 5-col inputs lack a class "
+            "column, so this flag is ignored with a warning."
+        ),
+    )
     parser.add_argument("--fuse", action="store_true",
                         help="Fuse conv+bn for faster inference (GPU only).")
     parser.add_argument("--no-display", action="store_true",
@@ -251,9 +257,10 @@ def main() -> None:
         outputs, img_info = predictor.inference(frame, args.conf, args.nms)
         if outputs[0] is not None:
             dets = outputs[0].cpu().numpy()
+            dets[:, :4] /= img_info["ratio"]
             dets_before = dets.shape[0]
             if dets_before > 0:
-                dets_in, _ = normalize_dets(dets, img_info, keep_classes)
+                dets_in = normalize_dets(dets, keep_classes)
                 logger.info(
                     f"Frame {frame_id}: kept {dets_in.shape[0]}/{dets_before} detections (after class filter and rescale)"
                 )
