@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# ByteTrack clone
+third_party/ByteTrack/*
+!third_party/ByteTrack/.gitkeep
+!third_party/ByteTrack/exps/
+!third_party/ByteTrack/exps/custom/
+!third_party/ByteTrack/exps/custom/yolox_x_coco.py
+third_party/ByteTrack/exps/custom/__pycache__/
+
+# Outputs
+outputs/videos/*
+!outputs/videos/.gitkeep
+outputs/logs/*
+!outputs/logs/.gitkeep
