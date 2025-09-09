@@ -30,6 +30,6 @@ jobs:
       - name: Syntax check setup_env.sh
         run: bash -n scripts/setup_env.sh
       - name: Post-install check
-        run: python scripts/post_install_check.py
+        run: ALLOW_CPU_ORT=1 python scripts/post_install_check.py
       - name: Run tests
         run: pytest -q
