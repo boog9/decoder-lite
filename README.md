@@ -86,6 +86,7 @@ warning is logged.
 ## Notes
 - Only COCO classes 0 and 32 are processed.
 - Inference always runs in FP32; any `--fp16` flag is ignored and the launcher logs `Using FP32 inference (fp16 disabled)`.
+- Experiments lacking `rgb_means`/`std` fall back to ImageNet values `(0.485, 0.456, 0.406)` and `(0.229, 0.224, 0.225)`.
 - `scripts/setup_env.sh` removes stray `~ip` directories that can trigger
   `pip` warnings about invalid distributions and reinstalls the build toolchain.
 - Torch with CUDA must be present before building ByteTrack. `make venv` installs
