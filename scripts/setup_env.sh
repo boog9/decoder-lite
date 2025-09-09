@@ -50,12 +50,13 @@ fi
 # Clean up broken pip artifacts that show up as "Ignoring invalid distribution ~ip"
 python - <<'PY'
 import site, glob, os, shutil
-for p in set(site.getsitepackages() + [site.getusersitepackages()]):
+paths = set(site.getsitepackages() + [site.getusersitepackages()])
+for p in paths:
     if not os.path.isdir(p):
         continue
     for bad in glob.glob(os.path.join(p, '*~ip*')):
         try:
-            shutil.rmtree(bad, ignore_errors=True)
+            (shutil.rmtree if os.path.isdir(bad) else os.remove)(bad)
         except Exception:
             pass
 PY
@@ -85,9 +86,11 @@ python scripts/verify_torchvision_nms.py --quiet || {
 if [[ "${MODE}" != "--vision-only" ]]; then
   echo "[setup_env] Installing project and ByteTrack dependencies ..."
   if [[ -f third_party/ByteTrack/requirements.txt ]]; then
-    # Keep PyTorch stack intact; other deps from PyPI; do not fail the whole setup
-    # if onnx-simplifier/onnxsim is inconsistent on Py3.13.
-    python -m pip install -r third_party/ByteTrack/requirements.txt || true
+    # drop lines that start (optionally with spaces) with onnx-simplifier/onnxsim; keep everything else
+    TMP_REQ="$(mktemp)"
+    sed -E '/^[[:space:]]*(onnx-simplifier|onnxsim)([[:space:]]*([<=>].*)?)?([[:space:]]*(#.*)?)?$/d' third_party/ByteTrack/requirements.txt > "$TMP_REQ"
+    python -m pip install -r "$TMP_REQ"
+    rm -f "$TMP_REQ"
   fi
   # ByteTrack imports 'thop' unconditionally in yolox/utils/model_utils.py
   # Install it explicitly without deps to avoid touching torch/vision.
