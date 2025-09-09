@@ -30,6 +30,8 @@ import argparse
 import json
 import sys
 import time
+import inspect
+from types import SimpleNamespace
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Set
 
@@ -258,12 +260,39 @@ def main() -> None:
         device=args.device,
         fp16=False,
     )
-    tracker = BYTETracker(
-        track_thresh=args.track_thresh,
-        track_buffer=args.track_buffer,
-        match_thresh=args.match_thresh,
-        mot20=args.mot20,
+    # fps / frame_rate may already be derived from video or args
+    frame_rate = getattr(args, "fps", None)
+    if frame_rate is None or frame_rate <= 0:
+        frame_rate = 30
+
+    # --- ByteTrack API compatibility shim ---
+    # Some versions accept named params; older ones expect a Namespace.
+    tracker_kwargs = dict(
+        track_thresh=getattr(args, "track_thresh", 0.5),
+        match_thresh=getattr(args, "match_thresh", 0.8),
+        track_buffer=getattr(args, "track_buffer", 30),
+        aspect_ratio_thresh=getattr(args, "aspect_ratio_thresh", 1.6),
+        min_box_area=getattr(args, "min_box_area", 10),
+        mot20=getattr(args, "mot20", False),
     )
+
+    try:
+        # Attempt new API with keyword arguments.
+        sig = inspect.signature(BYTETracker.__init__)
+        params = sig.parameters
+        if "frame_rate" in params:
+            tracker = BYTETracker(frame_rate=frame_rate, **tracker_kwargs)
+        else:
+            tracker = BYTETracker(**tracker_kwargs)
+    except TypeError:
+        # Fallback to old API: BYTETracker(args_namespace, frame_rate=30)
+        bt_args = SimpleNamespace(**tracker_kwargs)
+        try:
+            tracker = BYTETracker(bt_args, frame_rate=frame_rate)
+        except TypeError:
+            # Even older versions without frame_rate
+            tracker = BYTETracker(bt_args)
+    # --- end shim ---
 
     if args.path.isdigit():
         path: str | int = int(args.path)
