@@ -9,7 +9,7 @@ Example:
     python tools/decoder-lite.py \
         -f third_party/ByteTrack/exps/default/yolox_x.py \
         -c third_party/ByteTrack/pretrained/yolox_x.pth \
-        --path path/to/video.mp4 --save_result --device gpu --fp16 \
+        --path path/to/video.mp4 --save_result --device gpu \
         --keep-classes 0,32
 """
 
@@ -155,8 +155,12 @@ def make_parser() -> argparse.ArgumentParser:
                         help="Save annotated video and JSON results.")
     parser.add_argument("--device", type=str, default="cpu",
                         choices=["cpu", "gpu"], help="Inference device.")
-    parser.add_argument("--fp16", action="store_true",
-                        help="Use FP16 precision on GPU.")
+    # Flag kept for backward compatibility but ignored at runtime.
+    parser.add_argument(
+        "--fp16",
+        action="store_true",
+        help="(ignored) FP16 disabled; FP32 is forced",
+    )
     parser.add_argument("--conf", type=float, default=0.5,
                         help="Confidence threshold.")
     parser.add_argument("--nms", type=float, default=0.45,
@@ -223,18 +227,25 @@ def main() -> None:
     if args.tsize is not None:
         exp.test_size = (args.tsize, args.tsize)
     model = exp.get_model()
-    if args.device == "gpu":
-        model.cuda()
-        if args.fp16:
-            model.half()
-    model.eval()
+
     ckpt = torch.load(args.ckpt, map_location="cpu")
     model.load_state_dict(ckpt["model"])
+
+    # Force strict FP32 end-to-end to avoid dtype mismatches.
+    model = model.float()
+    logger.info("Using FP32 inference (fp16 disabled).")
+    try:
+        logger.info(f"Model Summary: {get_model_info(model, exp.test_size)}")
+    except Exception as e:
+        logger.warning(f"Model profiling skipped: {e.__class__.__name__}: {e}")
+
+    model.eval()
+    if args.device == "gpu":
+        model.cuda()
     if args.device == "gpu" and args.fuse:
         model = fuse_model(model)
-    logger.info(f"Model Summary: {get_model_info(model, exp.test_size)}")
 
-    predictor = Predictor(model, exp, postprocess, preproc, args.device, args.fp16)
+    predictor = Predictor(model, exp, postprocess, preproc, args.device)
     tracker = BYTETracker(
         track_thresh=args.track_thresh,
         track_buffer=args.track_buffer,
@@ -365,14 +376,12 @@ class Predictor:
         postprocess_fn,
         preproc_fn,
         device: str = "cpu",
-        fp16: bool = False,
     ) -> None:
         self.model = model
         self.exp = exp
         self.postprocess = postprocess_fn
         self.preproc = preproc_fn
         self.device = device
-        self.fp16 = fp16
         self.mean = exp.rgb_means
         self.std = exp.std
         self.num_classes = exp.num_classes
@@ -385,8 +394,6 @@ class Predictor:
         img = torch.from_numpy(img).unsqueeze(0)
         if self.device == "gpu":
             img = img.cuda()
-            if self.fp16:
-                img = img.half()
         with torch.no_grad():
             outputs = self.model(img)
             outputs = self.postprocess(

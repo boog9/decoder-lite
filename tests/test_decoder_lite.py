@@ -30,6 +30,12 @@ parse_keep = MODULE.parse_keep
 filter_by_classes = MODULE.filter_by_classes
 
 
+def test_make_parser_fp16_flag() -> None:
+    parser = MODULE.make_parser()
+    args = parser.parse_args(["-f", "exp.py", "-c", "weights.pth", "--fp16"])
+    assert args.fp16 is True
+
+
 def test_parse_keep() -> None:
     assert parse_keep("0,32") == [0, 32]
     assert parse_keep("32,0,0") == [0, 32]
