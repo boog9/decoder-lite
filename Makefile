@@ -9,17 +9,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-.PHONY: clone venv weights run test
+.PHONY: clone venv weights run test doctor
+
 FILE  ?= 0
 EXP   ?= third_party/ByteTrack/exps/custom/yolox_x_coco.py
 EXTRA ?=
 
+VENV_DIR := .venv
+PYTHON := $(VENV_DIR)/bin/python
+PIP := $(VENV_DIR)/bin/pip
+
+$(VENV_DIR):
+	python3 -m venv $(VENV_DIR)
+
 clone:
 	bash scripts/clone_bytetrack.sh
 
-venv:
-	# Ensure ByteTrack is synced and install all dependencies.
-	bash scripts/setup_env.sh
+venv: $(VENV_DIR)
+	. $(VENV_DIR)/bin/activate && bash scripts/setup_env.sh
+
+doctor:
+	. $(VENV_DIR)/bin/activate && $(PYTHON) scripts/doctor.py
 
 weights:
 	bash scripts/download_yolox_weights.sh
@@ -34,4 +44,3 @@ test:
 .PHONY: ort-check
 ort-check:
 	python -c 'import onnxruntime as ort; print(ort.__version__, ort.get_available_providers())'
-
