@@ -82,24 +82,15 @@ python scripts/verify_torchvision_nms.py --quiet || {
   exit 1
 }
 
-# 5) Install remaining project/ByteTrack deps (do not modify 3rd-party sources)
+# 5) Install runtime dependencies for ByteTrack (avoid requirements.txt)
 if [[ "${MODE}" != "--vision-only" ]]; then
-  echo "[setup_env] Installing project and ByteTrack dependencies ..."
-  if [[ -f third_party/ByteTrack/requirements.txt ]]; then
-    # drop lines that start (optionally with spaces) with onnx-simplifier/onnxsim; keep everything else
-    TMP_REQ="$(mktemp)"
-    sed -E '/^[[:space:]]*(onnx-simplifier|onnxsim)([[:space:]]*([<=>].*)?)?([[:space:]]*(#.*)?)?$/d' third_party/ByteTrack/requirements.txt > "$TMP_REQ"
-    python -m pip install -r "$TMP_REQ"
-    rm -f "$TMP_REQ"
-  fi
-  # ByteTrack imports 'thop' unconditionally in yolox/utils/model_utils.py
-  # Install it explicitly without deps to avoid touching torch/vision.
-  python -m pip install --no-deps "thop==0.1.1.post2209072238"
-  # Useful at runtime; harmless if already present
-  python -m pip install -U loguru opencv-python
-  # Editable install of ByteTrack WITHOUT changing its sources.
-  # Ensure torch is already present; use PEP 517 editable compat mode.
-  python -m pip install -e third_party/ByteTrack --no-deps --config-settings editable_mode=compat
+  echo "[setup_env] Installing runtime dependencies for ByteTrack ..."
+  python -m pip install -U "numpy<2.3" opencv-python loguru "easydict>=1.10" "scikit-image<0.25" thop motmetrics
+  # Try to install the faster 'lap'; fall back to 'lapx' if wheels are missing
+  python -m pip install lap || python -m pip install lapx
+  echo "[setup_env] Installing ByteTrack in editable mode ..."
+  # Ensure torch is already present; disable build isolation so setup.py can import torch
+  python -m pip install -e third_party/ByteTrack --no-deps --no-build-isolation --config-settings editable_mode=compat
 fi
 
 echo "[setup_env] Done."
