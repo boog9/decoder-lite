@@ -39,29 +39,59 @@ if [[ ! -f third_party/ByteTrack/requirements.txt ]]; then
 fi
 pip install -r requirements.txt
 pip install -r third_party/ByteTrack/requirements.txt
-export PIP_PREFER_BINARY=1
-if [[ "$(uname)" == "Darwin" ]]; then
-  # macOS uses the CPU-only wheel
-  python -m pip install --only-binary=:all: onnxruntime || true
-else
-  # Attempt GPU wheel; fall back to CPU if unavailable
-  if ! python -m pip install --only-binary=:all: onnxruntime-gpu; then
-    python -m pip install --only-binary=:all: onnxruntime || true
-  fi
-fi
-python - <<'PY'
-import platform, sys
+
+OS="$(uname -s)"
+: "${PIP_PREFER_BINARY:=1}"
+export PIP_PREFER_BINARY
+
+install_gpu_ort() {
+  python -m pip install --only-binary=:all: "onnxruntime-gpu==1.22.0"
+}
+
+install_cpu_ort() {
+  python -m pip install --only-binary=:all: "onnxruntime==1.22.1"
+}
+
+post_install_check() {
+  python - <<'PY'
+import sys, platform
 try:
     import onnxruntime as ort
-    print("ORT:", ort.__version__, "providers:", ort.get_available_providers())
-    if platform.system() in ("Linux","Windows"):
-        assert "CUDAExecutionProvider" in ort.get_available_providers(), \
-            f"CUDAExecutionProvider not available: {ort.get_available_providers()}"
+    prov = ort.get_available_providers()
+    print("ORT:", ort.__version__, "providers:", prov)
+    if platform.system() in ("Linux", "Windows"):
+        assert "CUDAExecutionProvider" in prov, f"CUDAExecutionProvider not available: {prov}"
     print("onnxruntime check: OK")
 except Exception as e:
     print("onnxruntime check: FAIL:", e, file=sys.stderr)
     sys.exit(1)
 PY
+}
+
+case "$OS" in
+  Darwin)
+    # macOS: CPU ORT only
+    install_cpu_ort
+    ;;
+  Linux|MINGW*|MSYS*|CYGWIN*)
+    # Linux/Windows: try GPU ORT first
+    if ! install_gpu_ort; then
+      # Optional fallback to CPU only if explicitly allowed
+      if [[ "${ALLOW_CPU_ORT:-}" == "1" ]]; then
+        install_cpu_ort
+      else
+        echo "ERROR: onnxruntime-gpu install failed and ALLOW_CPU_ORT!=1; aborting." >&2
+        exit 1
+      fi
+    fi
+    ;;
+  *)
+    echo "WARN: Unknown OS '$OS'; not installing ORT automatically." >&2
+    ;;
+esac
+
+# Run post-install verification (fails on Linux/Windows if CUDAExecutionProvider missing)
+post_install_check
 pip install cython cython_bbox
 pip install 'git+https://github.com/cocodataset/cocoapi.git#subdirectory=PythonAPI'
 pip install loguru opencv-python-headless numpy

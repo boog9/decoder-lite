@@ -30,3 +30,7 @@ test:
 	python scripts/post_install_check.py
 	pytest -q
 
+.PHONY: ort-check
+ort-check:
+	python -c 'import onnxruntime as ort; print(ort.__version__, ort.get_available_providers())'
+
