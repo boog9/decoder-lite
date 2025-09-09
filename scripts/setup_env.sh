@@ -95,7 +95,8 @@ if [[ "${MODE}" != "--vision-only" ]]; then
     motmetrics \
     tabulate \
     tqdm \
-    pycocotools
+    pycocotools \
+    cython-bbox
   # Try to install the faster 'lap'; fall back to 'lapx' if wheels are missing
   python -m pip install lap || python -m pip install lapx
   echo "[setup_env] Installing ByteTrack in editable mode ..."
