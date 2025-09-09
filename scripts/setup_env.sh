@@ -11,6 +11,7 @@
 # limitations under the License.
 
 set -euo pipefail
+export PIP_PREFER_BINARY=1
 
 # Create or reuse a virtual environment.
 if [[ -z "${VIRTUAL_ENV:-}" ]]; then
@@ -32,11 +33,15 @@ case "$PYV" in
 esac
 
 pip install -U pip wheel
+
 if [[ ! -f third_party/ByteTrack/requirements.txt ]]; then
   echo "[setup_env] ERROR: third_party/ByteTrack/requirements.txt not found. Run: make clone"
   exit 1
 fi
+pip install -r requirements.txt
 pip install -r third_party/ByteTrack/requirements.txt
+python -m pip install --only-binary=:all: onnxruntime-gpu || true
+python -m pip install --only-binary=:all: onnxruntime || true
 pip install cython cython_bbox
 pip install 'git+https://github.com/cocodataset/cocoapi.git#subdirectory=PythonAPI'
 pip install loguru opencv-python-headless numpy
