@@ -41,7 +41,7 @@ def test_filters_6col():
 
 def test_invalid_shape_raises():
     mod = _load_decoder_tool()
-    dets = np.zeros((1, 7), dtype=np.float32)
+    dets = np.zeros((1, 8), dtype=np.float32)
     with pytest.raises(ValueError):
         mod.normalize_dets(dets, keep_classes={0})
 
@@ -57,3 +57,17 @@ def test_warns_5col_once(caplog: pytest.LogCaptureFixture):
         mod.normalize_dets(dets, keep_classes={0})
     msgs = [rec.message for rec in caplog.records if "Ignoring --keep-classes" in rec.message]
     assert len(msgs) == 1
+
+
+def test_yolox_7col():
+    mod = _load_decoder_tool()
+    dets = np.array(
+        [
+            [0, 0, 10, 10, 0.9, 0.8, 1],
+            [1, 1, 11, 11, 0.5, 0.4, 2],
+        ],
+        dtype=np.float32,
+    )
+    out = mod.normalize_dets(dets, keep_classes={1})
+    assert out.shape == (1, 5)
+    np.testing.assert_allclose(out[:, 4], [0.72], rtol=1e-6, atol=1e-6)

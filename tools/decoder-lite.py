@@ -178,21 +178,23 @@ def normalize_dets(
     dets: np.ndarray,
     keep_classes: Optional[Set[int]] = None,
 ) -> np.ndarray:
-    """Normalize detection array to ByteTrack format.
+    """Normalize raw detector outputs to ByteTrack format.
 
-    Handles detectors that output either five columns
-    ``[x1, y1, x2, y2, score]`` or six columns with an extra class id.
+    Supported input shapes:
+      * ``(N, 5)`` – ``[x1, y1, x2, y2, score]``
+      * ``(N, 6)`` – ``[x1, y1, x2, y2, score, cls]``
+      * ``(N, 7)`` – ``[x1, y1, x2, y2, obj_conf, cls_conf, cls]`` (YOLOX style)
 
     Args:
-        dets: Detection array with shape ``(N, 5)`` or ``(N, 6)``.
-        keep_classes: Set of class IDs to retain when ``dets`` provides
-            a class column.
+        dets: Detection array in one of the above formats.
+        keep_classes: Optional set of class IDs to retain when class
+            information is available.
 
     Returns:
         Array of shape ``(M, 5)`` containing ``[x1, y1, x2, y2, score]``.
 
     Raises:
-        ValueError: If ``dets`` does not have five or six columns.
+        ValueError: If ``dets`` does not have five, six, or seven columns.
     """
 
     if dets is None or dets.size == 0:
@@ -200,19 +202,12 @@ def normalize_dets(
 
     if dets.ndim != 2:
         raise ValueError(
-            f"Unexpected dets ndim {dets.ndim}; expected 2 with shape (N,5) or (N,6)."
+            f"Unexpected dets ndim {dets.ndim}; expected 2 with shape (N,5|6|7)."
         )
 
-    if dets.shape[1] == 6:
-        xyxy = dets[:, :4]
-        score = dets[:, 4:5]
-        cls = dets[:, 5].astype(int)
-        if keep_classes:
-            keep_mask = np.isin(cls, list(keep_classes))
-            xyxy, score, cls = xyxy[keep_mask], score[keep_mask], cls[keep_mask]
-        return np.concatenate([xyxy, score], axis=1).astype(np.float32, copy=False)
+    cols = dets.shape[1]
 
-    if dets.shape[1] == 5:
+    if cols == 5:
         if keep_classes:
             global _WARNED_NO_CLASS
             if not _WARNED_NO_CLASS:
@@ -220,9 +215,31 @@ def normalize_dets(
                     "Detector outputs 5 columns (no class). Ignoring --keep-classes."
                 )
                 _WARNED_NO_CLASS = True
-        return dets[:, :5].astype(np.float32, copy=False)
+        xyxy = dets[:, :4]
+        score = dets[:, 4:5]
+        return np.concatenate([xyxy, score], axis=1).astype(np.float32, copy=False)
 
-    raise ValueError(f"Unexpected dets shape {dets.shape}; expected (N,5) or (N,6).")
+    if cols == 6:
+        xyxy = dets[:, :4]
+        score = dets[:, 4:5]
+        cls = dets[:, 5].astype(int)
+        if keep_classes:
+            mask = np.isin(cls, list(keep_classes))
+            xyxy, score = xyxy[mask], score[mask]
+        return np.concatenate([xyxy, score], axis=1).astype(np.float32, copy=False)
+
+    if cols == 7:
+        xyxy = dets[:, :4]
+        obj = dets[:, 4]
+        conf = dets[:, 5]
+        score = np.clip(obj * conf, 0.0, 1.0).reshape(-1, 1)
+        cls = dets[:, 6].astype(int)
+        if keep_classes:
+            mask = np.isin(cls, list(keep_classes))
+            xyxy, score = xyxy[mask], score[mask]
+        return np.concatenate([xyxy, score], axis=1).astype(np.float32, copy=False)
+
+    raise ValueError(f"Unexpected dets shape {dets.shape}; expected (N,5|6|7).")
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -429,6 +446,7 @@ def main() -> None:
         )
         if dets.size > 0:
             dets[:, :4] /= img_info["ratio"]
+        logger.info("Frame %d: dets shape after rescale: %s", frame_id, dets.shape)
         dets_in = normalize_dets(dets, keep_classes)
         logger.info(
             "Frame %d: kept %d/%d detections (after class filter and rescale)",
