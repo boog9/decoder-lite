@@ -36,15 +36,17 @@ from pathlib import Path
 from typing import Any, Iterable, List, Optional, Sequence, Set
 
 import logging
+import numpy as np
+
+try:  # pragma: no cover - optional dependency
+    import torch
+except Exception:  # pragma: no cover
+    torch = None  # allow running without torch in serialization
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("decoder-lite")
 _logger = logging.getLogger(__name__)
-
-try:
-    import numpy as np
-except ModuleNotFoundError:  # pragma: no cover
-    np = None
 
 try:
     from loguru import logger as loguru_logger
@@ -54,6 +56,25 @@ except ModuleNotFoundError:  # pragma: no cover
     logger.warning(
         "Optional dependencies are missing; limited functionality may apply."
     )
+
+
+def _json_default(obj: Any) -> Any:
+    """Serialize NumPy and torch objects for JSON output.
+
+    Args:
+        obj: Object to serialize.
+
+    Returns:
+        JSON-serializable representation.
+    """
+
+    if isinstance(obj, np.generic):
+        return obj.item()
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if torch is not None and isinstance(obj, torch.Tensor):
+        return obj.detach().cpu().tolist()
+    return str(obj)
 
 
 # --- Generic compat helper: call function with only supported kwargs ---
@@ -432,16 +453,15 @@ def main() -> None:
                     )
                     if args.save_result:
                         writer.write(online_im)
-                        records.append(
-                            {
-                                "frame": frame_id,
-                                "tlwh": [
-                                    list(map(float, tlwh)) for tlwh in online_tlwhs
-                                ],
-                                "id": online_ids,
-                                "score": online_scores,
-                            }
-                        )
+                        record = {
+                            "frame": int(frame_id),
+                            "tlwh": [
+                                [float(v) for v in tlwh] for tlwh in online_tlwhs
+                            ],
+                            "id": [int(i) for i in online_ids],
+                            "score": [float(s) for s in online_scores],
+                        }
+                        records.append(record)
                     if not args.no_display:
                         cv2.imshow("ByteTrack", online_im)
                 else:
@@ -508,7 +528,7 @@ def main() -> None:
     if args.save_result and json_path:
         json_path.parent.mkdir(parents=True, exist_ok=True)
         with json_path.open("w", encoding="utf-8") as f:
-            json.dump(records, f)
+            json.dump(records, f, ensure_ascii=False, default=_json_default)
         logger.info(f"Results saved to {out_path} and {json_path}")
 
 
