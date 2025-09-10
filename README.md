@@ -41,6 +41,8 @@ We never modify files under `third_party/ByteTrack/`. If the folder is missing o
 > * If you need to re-run only the Torch/Torchvision setup, call:
 >   `bash scripts/setup_env.sh --vision-only` (this skips cloning/ByteTrack deps).
 > * We do not modify any `third_party/ByteTrack/*.py` sources.
+> * Runtime `sitecustomize.py` restores `np.float`, `np.int`, `np.bool`, and
+>   `np.object` so ByteTrack works with NumPy 2.x without modifying vendor code.
 
 ## Setup
 ```bash
