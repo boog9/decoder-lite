@@ -78,6 +78,12 @@ Additional flags can be passed through `EXTRA`, for example:
 make run FILE=video.mp4 EXTRA="--fuse"
 ```
 
+To save raw frames without overlays, combine `--save_result` and `--save-raw`:
+
+```bash
+make run FILE=video.mp4 EXTRA="--save_result --save-raw"
+```
+
 The Makefile adds `--no-display` for headless execution. Remove the flag to view a window.
 
 Results are written to `outputs/videos/result.mp4` and logs to `outputs/logs/result.json`.
