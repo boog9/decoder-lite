@@ -449,9 +449,13 @@ def main() -> None:
                         _prev_ts = _now
                     _fps = fps_meter.update(_dt)
                     fps = float(_fps) if _fps is not None else 0.0
+                    # Preserve the original frame before drawing overlays.
+                    raw_im = img_info["raw_img"].copy()
+                    # Draw on a separate buffer to avoid mutating ``raw_im``.
+                    vis_im = raw_im.copy()
                     annotated = call_with_supported_kwargs(
                         plot_tracking,
-                        img_info["raw_img"],
+                        vis_im,
                         online_tlwhs,
                         online_ids,
                         scores=online_scores,
@@ -459,7 +463,6 @@ def main() -> None:
                         fps=fps,
                         cls_ids=online_cls_ids if "online_cls_ids" in locals() else None,
                     )
-                    raw_im = img_info["raw_img"]
                     if args.save_result:
                         writer.write(raw_im if args.save_raw else annotated)
                         record = {
@@ -489,10 +492,11 @@ def main() -> None:
                         _prev_ts = _now
                     _fps = fps_meter.update(_dt)
                     fps = float(_fps) if _fps is not None else 0.0
-                    raw_im = img_info["raw_img"]
+                    raw_im = img_info["raw_img"].copy()
+                    vis_im = raw_im.copy()
                     annotated = call_with_supported_kwargs(
                         plot_tracking,
-                        raw_im,
+                        vis_im,
                         [],
                         [],
                         scores=[],
@@ -519,10 +523,11 @@ def main() -> None:
                     _prev_ts = _now
                 _fps = fps_meter.update(_dt)
                 fps = float(_fps) if _fps is not None else 0.0
-                raw_im = img_info["raw_img"]
+                raw_im = img_info["raw_img"].copy()
+                vis_im = raw_im.copy()
                 annotated = call_with_supported_kwargs(
                     plot_tracking,
-                    raw_im,
+                    vis_im,
                     [],
                     [],
                     scores=[],
@@ -549,10 +554,11 @@ def main() -> None:
                 _prev_ts = _now
             _fps = fps_meter.update(_dt)
             fps = float(_fps) if _fps is not None else 0.0
-            raw_im = img_info["raw_img"]
+            raw_im = img_info["raw_img"].copy()
+            vis_im = raw_im.copy()
             annotated = call_with_supported_kwargs(
                 plot_tracking,
-                raw_im,
+                vis_im,
                 [],
                 [],
                 scores=[],
