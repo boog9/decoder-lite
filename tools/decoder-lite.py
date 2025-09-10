@@ -402,7 +402,6 @@ def main() -> None:
         ret, frame = cap.read()
         if not ret:
             break
-        # Lazy init writer once we know actual frame size/FPS
         if args.save_result and writer is None:
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
             fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
@@ -411,6 +410,11 @@ def main() -> None:
         frame_id += 1
         timer.tic()
         outputs, img_info = predictor.inference(frame, args.conf, args.nms)
+
+        online_tlwhs: List[List[float]] = []
+        online_ids: List[int] = []
+        online_scores: List[float] = []
+        online_cls_ids: List[int] = []
         if outputs[0] is not None:
             dets = outputs[0].cpu().numpy()
             dets[:, :4] /= img_info["ratio"]
@@ -426,155 +430,58 @@ def main() -> None:
                         [img_info["height"], img_info["width"]],
                         exp.test_size,
                     )
-
-                    online_tlwhs: List[List[float]] = []
-                    online_ids: List[int] = []
-                    online_scores: List[float] = []
                     for t in online_targets:
                         tlwh = t.tlwh
                         if tlwh[2] * tlwh[3] > args.min_box_area:
                             online_tlwhs.append(tlwh)
                             online_ids.append(t.track_id)
                             online_scores.append(t.score)
-                    _dt = None
-                    _toc = getattr(timer, "toc", None)
-                    if callable(_toc):
-                        try:
-                            _dt = _toc()
-                        except Exception:
-                            _dt = None
-                    if _dt is None:
-                        _now = time.perf_counter()
-                        _dt = _now - _prev_ts
-                        _prev_ts = _now
-                    _fps = fps_meter.update(_dt)
-                    fps = float(_fps) if _fps is not None else 0.0
-                    raw_im = img_info["raw_img"]  # BGR frame from source
-                    draw_src = raw_im.copy()  # ``plot_tracking`` mutates in-place
-                    vis_im = call_with_supported_kwargs(
-                        plot_tracking,
-                        draw_src,
-                        online_tlwhs,
-                        online_ids,
-                        scores=online_scores,
-                        frame_id=frame_id,
-                        fps=fps,
-                        cls_ids=online_cls_ids if "online_cls_ids" in locals() else None,
-                    )
-                    if not args.no_display:
-                        cv2.imshow("ByteTrack", vis_im)
-                    if args.save_result:
-                        frame_to_write = (
-                            raw_im if getattr(args, "save_raw", False) else vis_im
-                        )
-                        writer.write(frame_to_write)
-                        record = {
-                            "frame": int(frame_id),
-                            "tlwh": [
-                                [float(v) for v in tlwh] for tlwh in online_tlwhs
-                            ],
-                            "id": [int(i) for i in online_ids],
-                            "score": [float(s) for s in online_scores],
-                        }
-                        records.append(record)
-                else:
-                    _dt = None
-                    _toc = getattr(timer, "toc", None)
-                    if callable(_toc):
-                        try:
-                            _dt = _toc()
-                        except Exception:
-                            _dt = None
-                    if _dt is None:
-                        _now = time.perf_counter()
-                        _dt = _now - _prev_ts
-                        _prev_ts = _now
-                    _fps = fps_meter.update(_dt)
-                    fps = float(_fps) if _fps is not None else 0.0
-                    raw_im = img_info["raw_img"]  # BGR frame from source
-                    draw_src = raw_im.copy()  # ``plot_tracking`` mutates in-place
-                    vis_im = call_with_supported_kwargs(
-                        plot_tracking,
-                        draw_src,
-                        [],
-                        [],
-                        scores=[],
-                        frame_id=frame_id,
-                        fps=fps,
-                    )
-                    if not args.no_display:
-                        cv2.imshow("ByteTrack", vis_im)
-                    if args.save_result:
-                        frame_to_write = (
-                            raw_im if getattr(args, "save_raw", False) else vis_im
-                        )
-                        writer.write(frame_to_write)
-            else:
+                            cls_val = getattr(t, "cls", None)
+                            online_cls_ids.append(int(cls_val) if cls_val is not None else -1)
+
+        _dt = None
+        _toc = getattr(timer, "toc", None)
+        if callable(_toc):
+            try:
+                _dt = _toc()
+            except Exception:
                 _dt = None
-                _toc = getattr(timer, "toc", None)
-                if callable(_toc):
-                    try:
-                        _dt = _toc()
-                    except Exception:
-                        _dt = None
-                if _dt is None:
-                    _now = time.perf_counter()
-                    _dt = _now - _prev_ts
-                    _prev_ts = _now
-                _fps = fps_meter.update(_dt)
-                fps = float(_fps) if _fps is not None else 0.0
-                raw_im = img_info["raw_img"]  # BGR frame from source
-                draw_src = raw_im.copy()  # ``plot_tracking`` mutates in-place
-                vis_im = call_with_supported_kwargs(
-                    plot_tracking,
-                    draw_src,
-                    [],
-                    [],
-                    scores=[],
-                    frame_id=frame_id,
-                    fps=fps,
-                )
-                if not args.no_display:
-                    cv2.imshow("ByteTrack", vis_im)
-                if args.save_result:
-                    frame_to_write = (
-                        raw_im if getattr(args, "save_raw", False) else vis_im
-                    )
-                    writer.write(frame_to_write)
-        else:
-            _dt = None
-            _toc = getattr(timer, "toc", None)
-            if callable(_toc):
-                try:
-                    _dt = _toc()
-                except Exception:
-                    _dt = None
-            if _dt is None:
-                _now = time.perf_counter()
-                _dt = _now - _prev_ts
-                _prev_ts = _now
-            _fps = fps_meter.update(_dt)
-            fps = float(_fps) if _fps is not None else 0.0
-            raw_im = img_info["raw_img"]  # BGR frame from source
-            draw_src = raw_im.copy()  # ``plot_tracking`` mutates in-place
-            vis_im = call_with_supported_kwargs(
-                plot_tracking,
-                draw_src,
-                [],
-                [],
-                scores=[],
-                frame_id=frame_id,
-                fps=fps,
-            )
-            if not args.no_display:
-                cv2.imshow("ByteTrack", vis_im)
-            if args.save_result:
-                frame_to_write = (
-                    raw_im if getattr(args, "save_raw", False) else vis_im
-                )
+        if _dt is None:
+            _now = time.perf_counter()
+            _dt = _now - _prev_ts
+            _prev_ts = _now
+        _fps = fps_meter.update(_dt)
+        fps = float(_fps) if _fps is not None else 0.0
+
+        raw_im = img_info["raw_img"]  # BGR frame from source
+        draw_src = raw_im.copy()  # ``plot_tracking`` mutates in-place
+        vis_im = call_with_supported_kwargs(
+            plot_tracking,
+            draw_src,
+            online_tlwhs,
+            online_ids,
+            scores=online_scores,
+            frame_id=frame_id,
+            fps=fps,
+            cls_ids=online_cls_ids,
+        )
+
+        if not args.no_display:
+            cv2.imshow("ByteTrack", vis_im)
+            if cv2.waitKey(1) == 27:
+                break
+
+        if args.save_result:
+            frame_to_write = raw_im if getattr(args, "save_raw", False) else vis_im
+            if writer is not None:
                 writer.write(frame_to_write)
-        if not args.no_display and cv2.waitKey(1) == 27:
-            break
+            record = {
+                "frame": int(frame_id),
+                "tlwh": [[float(v) for v in tlwh] for tlwh in online_tlwhs],
+                "id": [int(i) for i in online_ids],
+                "score": [float(s) for s in online_scores],
+            }
+            records.append(record)
     cap.release()
     if writer:
         writer.release()
