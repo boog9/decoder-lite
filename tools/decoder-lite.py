@@ -56,6 +56,45 @@ except ModuleNotFoundError:  # pragma: no cover
     )
 
 
+# --- Compat wrapper for ByteTrack/YOLOX plot_tracking signature differences ---
+def _plot_tracking_compat(
+    plot_fn: Any,
+    img: Any,
+    tlwhs: Sequence[Sequence[float]],
+    ids: Sequence[int],
+    *,
+    scores: Optional[Sequence[float]] = None,
+    frame_id: int = 0,
+    fps: float = 0.0,
+    cls_ids: Optional[Sequence[int]] = None,
+) -> Any:
+    """Call plot_fn with kwargs supported by the installed ByteTrack version.
+
+    Some ByteTrack/YOLOX releases accept ``cls_ids`` in ``plot_tracking`` while
+    others do not. This thin wrapper inspects the function signature and only
+    forwards the argument when supported.
+
+    Args:
+        plot_fn: Plotting function to invoke.
+        img: Image on which to draw.
+        tlwhs: Bounding boxes in ``tlwh`` format.
+        ids: Tracking IDs.
+        scores: Optional detection scores.
+        frame_id: Frame number.
+        fps: Frames-per-second metric.
+        cls_ids: Optional class IDs for color-coding.
+
+    Returns:
+        Image returned by ``plot_fn``.
+    """
+
+    params = inspect.signature(plot_fn).parameters
+    kwargs = {"scores": scores, "frame_id": frame_id, "fps": fps}
+    if "cls_ids" in params:
+        kwargs["cls_ids"] = cls_ids
+    return plot_fn(img, tlwhs, ids, **kwargs)
+
+
 class FpsEMA:
     """Exponential moving average FPS meter."""
 
@@ -394,14 +433,15 @@ def main() -> None:
                         _prev_ts = _now
                     _fps = fps_meter.update(_dt)
                     fps = float(_fps) if _fps is not None else 0.0
-                    online_im = plot_tracking(
+                    online_im = _plot_tracking_compat(
+                        plot_tracking,
                         img_info["raw_img"],
                         online_tlwhs,
                         online_ids,
+                        scores=online_scores,
                         frame_id=frame_id,
                         fps=fps,
-                        scores=online_scores,
-                        cls_ids=None,
+                        cls_ids=online_cls_ids if "online_cls_ids" in locals() else None,
                     )
                     if args.save_result:
                         writer.write(online_im)

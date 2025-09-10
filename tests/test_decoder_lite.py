@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+from typing import Any
+
 import pytest
 
 try:
@@ -29,6 +31,7 @@ SPEC.loader.exec_module(MODULE)
 parse_keep = MODULE.parse_keep
 filter_by_classes = MODULE.filter_by_classes
 FpsEMA = MODULE.FpsEMA
+_plot_tracking_compat = MODULE._plot_tracking_compat
 
 
 def test_make_parser_fp16_flag() -> None:
@@ -144,3 +147,63 @@ def test_inference_postprocess_variants(variant: str) -> None:
         assert len(args) == 4
     else:
         assert args[4] is True
+
+
+def test_plot_tracking_compat_with_cls_ids() -> None:
+    record: dict[str, Any] = {}
+
+    def fn(img, tlwhs, ids, *, scores=None, frame_id=0, fps=0.0, cls_ids=None):
+        record["kwargs"] = {
+            "scores": scores,
+            "frame_id": frame_id,
+            "fps": fps,
+            "cls_ids": cls_ids,
+        }
+        return "img"
+
+    out = _plot_tracking_compat(
+        fn,
+        "img",
+        [],
+        [],
+        scores=[0.1],
+        frame_id=1,
+        fps=2.0,
+        cls_ids=[3],
+    )
+    assert out == "img"
+    assert record["kwargs"] == {
+        "scores": [0.1],
+        "frame_id": 1,
+        "fps": 2.0,
+        "cls_ids": [3],
+    }
+
+
+def test_plot_tracking_compat_without_cls_ids() -> None:
+    record: dict[str, Any] = {}
+
+    def fn(img, tlwhs, ids, *, scores=None, frame_id=0, fps=0.0):
+        record["kwargs"] = {
+            "scores": scores,
+            "frame_id": frame_id,
+            "fps": fps,
+        }
+        return "img"
+
+    out = _plot_tracking_compat(
+        fn,
+        "img",
+        [],
+        [],
+        scores=[0.1],
+        frame_id=1,
+        fps=2.0,
+        cls_ids=[3],
+    )
+    assert out == "img"
+    assert record["kwargs"] == {
+        "scores": [0.1],
+        "frame_id": 1,
+        "fps": 2.0,
+    }
