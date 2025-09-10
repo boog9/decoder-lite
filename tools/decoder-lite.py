@@ -449,21 +449,20 @@ def main() -> None:
                         _prev_ts = _now
                     _fps = fps_meter.update(_dt)
                     fps = float(_fps) if _fps is not None else 0.0
-                    raw_im = img_info["raw_img"]
-                    should_draw = args.save_result or (not args.no_display)
-                    vis_im = raw_im
-                    if should_draw:
-                        draw_src = raw_im.copy()
-                        vis_im = call_with_supported_kwargs(
-                            plot_tracking,
-                            draw_src,
-                            online_tlwhs,
-                            online_ids,
-                            scores=online_scores,
-                            frame_id=frame_id,
-                            fps=fps,
-                            cls_ids=online_cls_ids if "online_cls_ids" in locals() else None,
-                        )
+                    raw_im = img_info["raw_img"]  # BGR frame from source
+                    draw_src = raw_im.copy()  # ``plot_tracking`` mutates in-place
+                    vis_im = call_with_supported_kwargs(
+                        plot_tracking,
+                        draw_src,
+                        online_tlwhs,
+                        online_ids,
+                        scores=online_scores,
+                        frame_id=frame_id,
+                        fps=fps,
+                        cls_ids=online_cls_ids if "online_cls_ids" in locals() else None,
+                    )
+                    if not args.no_display:
+                        cv2.imshow("ByteTrack", vis_im)
                     if args.save_result:
                         frame_to_write = (
                             raw_im if getattr(args, "save_raw", False) else vis_im
@@ -478,8 +477,6 @@ def main() -> None:
                             "score": [float(s) for s in online_scores],
                         }
                         records.append(record)
-                    if not args.no_display:
-                        cv2.imshow("ByteTrack", vis_im)
                 else:
                     _dt = None
                     _toc = getattr(timer, "toc", None)
@@ -494,27 +491,24 @@ def main() -> None:
                         _prev_ts = _now
                     _fps = fps_meter.update(_dt)
                     fps = float(_fps) if _fps is not None else 0.0
-                    raw_im = img_info["raw_img"]
-                    should_draw = args.save_result or (not args.no_display)
-                    vis_im = raw_im
-                    if should_draw:
-                        draw_src = raw_im.copy()
-                        vis_im = call_with_supported_kwargs(
-                            plot_tracking,
-                            draw_src,
-                            [],
-                            [],
-                            scores=[],
-                            frame_id=frame_id,
-                            fps=fps,
-                        )
+                    raw_im = img_info["raw_img"]  # BGR frame from source
+                    draw_src = raw_im.copy()  # ``plot_tracking`` mutates in-place
+                    vis_im = call_with_supported_kwargs(
+                        plot_tracking,
+                        draw_src,
+                        [],
+                        [],
+                        scores=[],
+                        frame_id=frame_id,
+                        fps=fps,
+                    )
+                    if not args.no_display:
+                        cv2.imshow("ByteTrack", vis_im)
                     if args.save_result:
                         frame_to_write = (
                             raw_im if getattr(args, "save_raw", False) else vis_im
                         )
                         writer.write(frame_to_write)
-                    if not args.no_display:
-                        cv2.imshow("ByteTrack", vis_im)
             else:
                 _dt = None
                 _toc = getattr(timer, "toc", None)
@@ -529,27 +523,24 @@ def main() -> None:
                     _prev_ts = _now
                 _fps = fps_meter.update(_dt)
                 fps = float(_fps) if _fps is not None else 0.0
-                raw_im = img_info["raw_img"]
-                should_draw = args.save_result or (not args.no_display)
-                vis_im = raw_im
-                if should_draw:
-                    draw_src = raw_im.copy()
-                    vis_im = call_with_supported_kwargs(
-                        plot_tracking,
-                        draw_src,
-                        [],
-                        [],
-                        scores=[],
-                        frame_id=frame_id,
-                        fps=fps,
-                    )
+                raw_im = img_info["raw_img"]  # BGR frame from source
+                draw_src = raw_im.copy()  # ``plot_tracking`` mutates in-place
+                vis_im = call_with_supported_kwargs(
+                    plot_tracking,
+                    draw_src,
+                    [],
+                    [],
+                    scores=[],
+                    frame_id=frame_id,
+                    fps=fps,
+                )
+                if not args.no_display:
+                    cv2.imshow("ByteTrack", vis_im)
                 if args.save_result:
                     frame_to_write = (
                         raw_im if getattr(args, "save_raw", False) else vis_im
                     )
                     writer.write(frame_to_write)
-                if not args.no_display:
-                    cv2.imshow("ByteTrack", vis_im)
         else:
             _dt = None
             _toc = getattr(timer, "toc", None)
@@ -564,27 +555,24 @@ def main() -> None:
                 _prev_ts = _now
             _fps = fps_meter.update(_dt)
             fps = float(_fps) if _fps is not None else 0.0
-            raw_im = img_info["raw_img"]
-            should_draw = args.save_result or (not args.no_display)
-            vis_im = raw_im
-            if should_draw:
-                draw_src = raw_im.copy()
-                vis_im = call_with_supported_kwargs(
-                    plot_tracking,
-                    draw_src,
-                    [],
-                    [],
-                    scores=[],
-                    frame_id=frame_id,
-                    fps=fps,
-                )
+            raw_im = img_info["raw_img"]  # BGR frame from source
+            draw_src = raw_im.copy()  # ``plot_tracking`` mutates in-place
+            vis_im = call_with_supported_kwargs(
+                plot_tracking,
+                draw_src,
+                [],
+                [],
+                scores=[],
+                frame_id=frame_id,
+                fps=fps,
+            )
+            if not args.no_display:
+                cv2.imshow("ByteTrack", vis_im)
             if args.save_result:
                 frame_to_write = (
                     raw_im if getattr(args, "save_raw", False) else vis_im
                 )
                 writer.write(frame_to_write)
-            if not args.no_display:
-                cv2.imshow("ByteTrack", vis_im)
         if not args.no_display and cv2.waitKey(1) == 27:
             break
     cap.release()
