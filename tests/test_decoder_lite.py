@@ -28,6 +28,7 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(MODULE)
 parse_keep = MODULE.parse_keep
 filter_by_classes = MODULE.filter_by_classes
+FpsEMA = MODULE.FpsEMA
 
 
 def test_make_parser_fp16_flag() -> None:
@@ -53,6 +54,14 @@ def test_filter_by_classes() -> None:
     filtered = filter_by_classes(dets, keep)
     assert filtered.shape[0] == 2
     assert set(filtered[:, 5].astype(int)) == {0, 32}
+
+
+def test_fps_ema() -> None:
+    meter = FpsEMA(alpha=0.5)
+    assert meter.update(0.2) == 5.0
+    assert meter.update(0.1) == pytest.approx(7.5)
+    # Negative or zero dt should keep previous FPS
+    assert meter.update(0.0) == pytest.approx(7.5)
 
 
 def test_predictor_mean_std_defaults() -> None:

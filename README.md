@@ -87,6 +87,8 @@ warning is logged.
 
 ## Notes
 - Only COCO classes 0 and 32 are processed.
+- FPS is smoothed with an exponential moving average and falls back to
+  ``time.perf_counter`` if the ByteTrack timer lacks ``toc``.
 - Inference always runs in FP32; any `--fp16` flag is ignored and the launcher logs `Using FP32 inference (fp16 disabled)`.
 - Experiments lacking `rgb_means`/`std` fall back to ImageNet values `(0.485, 0.456, 0.406)` and `(0.229, 0.224, 0.225)`.
 - The tracker automatically detects old/new ByteTrack APIs and adapts the `BYTETracker`
