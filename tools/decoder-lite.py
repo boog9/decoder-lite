@@ -484,10 +484,7 @@ def main() -> None:
         if num_raw:
             bboxes_xyxy = out_np[:, :4].astype(np.float32, copy=True)
             if frame_id == 1:
-                logger.info(
-                    "Sample BEFORE descaling (xyxy) head: %s",
-                    bboxes_xyxy[:3].tolist(),
-                )
+                logger.info("Sample BEFORE descaling (xyxy) head: %s", bboxes_xyxy[:3].tolist())
             dw, dh = (0.0, 0.0)
             if "pad" in img_info:
                 dw, dh = img_info["pad"]
@@ -513,41 +510,21 @@ def main() -> None:
         assert (bboxes_xyxy[:, 0] <= bboxes_xyxy[:, 2]).all() if bboxes_xyxy.size else True
         assert (bboxes_xyxy[:, 1] <= bboxes_xyxy[:, 3]).all() if bboxes_xyxy.size else True
 
-        if num_raw:
-            if out_np.shape[1] >= 7:
-                scores = (out_np[:, 4] * out_np[:, 5]).astype(np.float32)
-                cls_ids = out_np[:, 6].astype(np.int32)
-            elif out_np.shape[1] == 6:
-                scores = out_np[:, 4].astype(np.float32)
-                cls_ids = out_np[:, 5].astype(np.int32)
-            else:
-                scores = out_np[:, 4].astype(np.float32)
-                cls_ids = np.full((num_raw,), -1, np.int32)
+        # Feed tracker exactly what ByteTrack demo expects: outputs[0] (XYXY + score [+ cls])
+        if out_np.size == 0:
+            dets_for_tracker = np.zeros((0, out_np.shape[1] or 5), dtype=np.float32)
         else:
-            scores = np.empty((0,), dtype=np.float32)
-            cls_ids = np.empty((0,), dtype=np.int32)
-
-        if keep_classes is not None and cls_ids.size:
-            mask = np.isin(cls_ids, keep_classes)
-            bboxes_xyxy = bboxes_xyxy[mask]
-            scores = scores[mask]
-            cls_ids = cls_ids[mask]
-
-        # ByteTrack expects TLWH + score
-        if bboxes_xyxy.size == 0:
-            dets_for_tracker = np.zeros((0, 5), dtype=np.float32)
-        else:
-            tlwh_in = np.empty_like(bboxes_xyxy, dtype=np.float32)
-            tlwh_in[:, 0] = bboxes_xyxy[:, 0]
-            tlwh_in[:, 1] = bboxes_xyxy[:, 1]
-            tlwh_in[:, 2] = bboxes_xyxy[:, 2] - bboxes_xyxy[:, 0]
-            tlwh_in[:, 3] = bboxes_xyxy[:, 3] - bboxes_xyxy[:, 1]
-            dets_for_tracker = np.hstack([tlwh_in, scores[:, None]]).astype(
-                np.float32, copy=False
+            out_for_tracker = out_np
+            if keep_classes is not None and out_np.shape[1] >= 6:
+                cls_col = out_np.shape[1] - 1
+                mask = np.isin(out_np[:, cls_col].astype(np.int32), keep_classes)
+                out_for_tracker = out_np[mask]
+            dets_for_tracker = np.ascontiguousarray(
+                out_for_tracker.astype(np.float32, copy=False)
             )
-        dets_c = np.ascontiguousarray(dets_for_tracker)
+        dets_c = dets_for_tracker
         logger.info(
-            f"Frame {frame_id}: dets raw={num_raw} kept={len(bboxes_xyxy)} ratio={ratio:.6f}"
+            f"Frame {frame_id}: dets raw={num_raw} kept={len(dets_for_tracker)} ratio={ratio:.6f}"
         )
         try:
             online_targets = tracker.update(dets_c, (h, w))
@@ -555,7 +532,7 @@ def main() -> None:
             in_h, in_w = map(int, getattr(exp, "test_size", (h, w)))
             online_targets = tracker.update(dets_c, (h, w), (in_h, in_w))
         for t in online_targets:
-            # Draw exactly the TLWH provided by the tracker
+            # Draw exactly the TLWH provided by the tracker (ByteTrack returns TLWH in raw pixels)
             tlwh = np.asarray(t.tlwh, dtype=np.float32)
             if tlwh[2] * tlwh[3] <= 0:
                 continue
