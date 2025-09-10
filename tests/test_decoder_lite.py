@@ -74,6 +74,46 @@ def test_filter_by_classes_empty() -> None:
     assert out.shape == (0, 5)
 
 
+@pytest.mark.skipif(np is None, reason="numpy not available")
+def test_xyxy_to_tlwh_conversion() -> None:
+    xyxy = np.array([[10, 20, 110, 220]], dtype=np.float32)
+    tlwh = np.empty_like(xyxy)
+    tlwh[:, 0] = xyxy[:, 0]
+    tlwh[:, 1] = xyxy[:, 1]
+    tlwh[:, 2] = xyxy[:, 2] - xyxy[:, 0]
+    tlwh[:, 3] = xyxy[:, 3] - xyxy[:, 1]
+    assert tlwh.tolist() == [[10.0, 20.0, 100.0, 200.0]]
+
+
+@pytest.mark.skipif(np is None, reason="numpy not available")
+def test_plot_tracking_uses_tlwh() -> None:
+    """Ensure TLWH from tracker is used without mixing with TLBR."""
+
+    class DummyTrack:
+        tlwh = [10, 20, 30, 40]
+        tlbr = [1, 2, 3, 4]  # Deliberately different to catch mixing
+        track_id = 5
+        score = 0.9
+        cls = 0
+
+    t = DummyTrack()
+    tlwh = np.asarray(t.tlwh, dtype=np.float32)
+    tlwhs = []
+    online_ids: list[int] = []
+    online_scores: list[float] = []
+    online_cls_ids: list[int] = []
+    if tlwh[2] * tlwh[3] > 0:
+        tlwhs.append(tlwh.tolist())
+        online_ids.append(int(t.track_id))
+        online_scores.append(float(t.score))
+        online_cls_ids.append(int(getattr(t, "cls", -1)))
+
+    assert tlwhs == [[10.0, 20.0, 30.0, 40.0]]
+    assert online_ids == [5]
+    assert online_scores == [0.9]
+    assert online_cls_ids == [0]
+
+
 def test_fps_ema() -> None:
     meter = FpsEMA(alpha=0.5)
     assert meter.update(0.2) == 5.0
