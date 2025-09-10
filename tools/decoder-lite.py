@@ -33,7 +33,7 @@ import time
 import inspect
 from types import SimpleNamespace
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Sequence, Set
+from typing import Any, Iterable, List, Optional, Set
 
 import logging
 import numpy as np
@@ -56,6 +56,9 @@ except ModuleNotFoundError:  # pragma: no cover
     logger.warning(
         "Optional dependencies are missing; limited functionality may apply."
     )
+
+
+_WARNED_NO_CLASS = False
 
 
 def _json_default(obj: Any) -> Any:
@@ -173,50 +176,53 @@ def filter_by_classes(dets: np.ndarray, keep: Iterable[int]) -> np.ndarray:
 
 def normalize_dets(
     dets: np.ndarray,
-    keep_classes: Optional[Sequence[int]] = None,
+    keep_classes: Optional[Set[int]] = None,
 ) -> np.ndarray:
-    """Normalize detection tensor to ByteTrack-compatible shape (N,5).
+    """Normalize detection array to ByteTrack format.
+
+    Handles detectors that output either five columns
+    ``[x1, y1, x2, y2, score]`` or six columns with an extra class id.
 
     Args:
-        dets: Detection array with shape (N,>=5).
-        keep_classes: Optional sequence of class IDs to retain.
+        dets: Detection array with shape ``(N, 5)`` or ``(N, 6)``.
+        keep_classes: Set of class IDs to retain when ``dets`` provides
+            a class column.
 
     Returns:
-        Array of shape (M,5) containing <x1,y1,x2,y2,score>.
+        Array of shape ``(M, 5)`` containing ``[x1, y1, x2, y2, score]``.
 
     Raises:
-        ValueError: If ``dets`` has fewer than five columns.
+        ValueError: If ``dets`` does not have five or six columns.
     """
 
     if dets is None or dets.size == 0:
         return np.empty((0, 5), dtype=np.float32)
 
-    if dets.ndim != 2 or dets.shape[1] < 5:
+    if dets.ndim != 2:
         raise ValueError(
-            f"Expected dets with shape (N,>=5), got {getattr(dets, 'shape', None)}"
+            f"Unexpected dets ndim {dets.ndim}; expected 2 with shape (N,5) or (N,6)."
         )
 
-    num_cols = dets.shape[1]
-    cls_col: Optional[int] = None
-    if num_cols >= 7:
-        cls_col = 6
-    elif num_cols == 6:
-        cls_col = 5
+    if dets.shape[1] == 6:
+        xyxy = dets[:, :4]
+        score = dets[:, 4:5]
+        cls = dets[:, 5].astype(int)
+        if keep_classes:
+            keep_mask = np.isin(cls, list(keep_classes))
+            xyxy, score, cls = xyxy[keep_mask], score[keep_mask], cls[keep_mask]
+        return np.concatenate([xyxy, score], axis=1).astype(np.float32, copy=False)
 
-    if keep_classes:
-        if cls_col is not None:
-            cls_ids = dets[:, cls_col].astype(np.int64, copy=False)
-            mask = np.isin(
-                cls_ids, np.asarray(list(keep_classes), dtype=np.int64)
-            )
-            dets = dets[mask]
-        else:
-            _logger.warning(
-                "--keep-classes provided but inputs have no class column (5-col detections). Ignoring."
-            )
+    if dets.shape[1] == 5:
+        if keep_classes:
+            global _WARNED_NO_CLASS
+            if not _WARNED_NO_CLASS:
+                logger.warning(
+                    "Detector outputs 5 columns (no class). Ignoring --keep-classes."
+                )
+                _WARNED_NO_CLASS = True
+        return dets[:, :5].astype(np.float32, copy=False)
 
-    dets5 = dets[:, :5].astype(np.float32, copy=False)
-    return dets5
+    raise ValueError(f"Unexpected dets shape {dets.shape}; expected (N,5) or (N,6).")
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -416,26 +422,47 @@ def main() -> None:
         online_scores: List[float] = []
         online_cls_ids: List[int] = []
 
-        if outputs[0] is not None:
-            dets = outputs[0].cpu().numpy()
+        dets = (
+            outputs[0].cpu().numpy()
+            if outputs[0] is not None
+            else np.empty((0, 5), dtype=np.float32)
+        )
+        if dets.size > 0:
             dets[:, :4] /= img_info["ratio"]
-            dets_in = normalize_dets(dets, keep_classes)
-            if dets_in.shape[0] > 0:
-                online_targets = tracker.update(
-                    dets_in,
-                    [img_info["height"], img_info["width"]],
-                    exp.test_size,
-                )
-                for t in online_targets:
-                    tlwh = t.tlwh
-                    if tlwh[2] * tlwh[3] > args.min_box_area:
-                        online_tlwhs.append(tlwh)
-                        online_ids.append(t.track_id)
-                        online_scores.append(t.score)
-                        cls_val = getattr(t, "cls", None)
-                        online_cls_ids.append(
-                            int(cls_val) if cls_val is not None else -1
-                        )
+        dets_in = normalize_dets(dets, keep_classes)
+        logger.info(
+            "Frame %d: kept %d/%d detections (after class filter and rescale)",
+            frame_id,
+            dets_in.shape[0],
+            dets.shape[0],
+        )
+        assert (
+            dets_in.ndim == 2 and dets_in.shape[1] == 5
+        ), "dets_in must be (N,5) [x1,y1,x2,y2,score]"
+        assert np.all(
+            dets_in[:, :4] >= 0
+        ), "coords must be non-negative after rescale"
+        if dets_in.shape[0] > 0:
+            online_targets = tracker.update(
+                dets_in,
+                [img_info["height"], img_info["width"]],
+                exp.test_size,
+            )
+            for t in online_targets:
+                tlwh = t.tlwh
+                if tlwh[2] * tlwh[3] > args.min_box_area:
+                    online_tlwhs.append(tlwh)
+                    online_ids.append(t.track_id)
+                    online_scores.append(t.score)
+                    cls_val = getattr(t, "cls", None)
+                    online_cls_ids.append(
+                        int(cls_val) if cls_val is not None else -1
+                    )
+        if len(online_tlwhs) == 0 and dets_in.shape[0] > 0:
+            logger.debug(
+                "No tracks after filter; dets present. Check min_box_area=%s / tracker thresholds.",
+                args.min_box_area,
+            )
 
         _dt = timer.toc() if hasattr(timer, "toc") else None
         if _dt is None:
