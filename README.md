@@ -94,14 +94,15 @@ coordinates and drawn on a copy of the original frame, ensuring `--save-raw`
 outputs remain pristine. Pass `--save-raw` to store unmodified frames instead.
 JSON logs are written to `outputs/logs/result.json`.
 
-Use the `--keep-classes` flag to restrict tracking to specific COCO class IDs
-(``--keep-classes 0,32`` for persons and sports balls). Passing no value or an
-empty string disables filtering. If the detector outputs only five columns (no
-class column), the flag is ignored and a warning is logged. YOLOX detections
-with five, six, or seven columns are supported; for the seven-column variant the
-final score is ``obj_conf * cls_conf``. Class filtering is "soft": if the filter
-removes all detections in a frame, it is disabled for that frame and a warning
-is emitted so visualization is preserved.
+Tracking defaults to all classes. To keep only specific classes, pass
+`--keep-classes`, for example `--keep-classes 0,32` for persons and sports
+balls. Supplying `ALL` or an empty string is equivalent to the default (no
+filtering). If the detector outputs only five columns (no class column), the
+flag is ignored and a warning is logged. YOLOX detections with five, six, or
+seven columns are supported; for the seven-column variant the final score is
+``obj_conf * cls_conf``. Class filtering is "soft": if the filter removes all
+detections in a frame, it is disabled for that frame and a warning is emitted so
+visualization is preserved.
 
 ## Notes
 - FPS is smoothed with an exponential moving average and falls back to

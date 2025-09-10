@@ -51,6 +51,7 @@ def test_parse_keep_classes() -> None:
     assert parse_keep_classes("0,32") == [0, 32]
     assert parse_keep_classes("") is None
     assert parse_keep_classes(None) is None
+    assert parse_keep_classes("ALL") is None
 
 
 @pytest.mark.skipif(np is None, reason="numpy not available")
@@ -243,6 +244,7 @@ def test_track_coordinate_postprocess() -> None:
                 setattr(self, k, v)
 
     w, h = 100, 80
+    frame_id = 1
     online_targets = [
         Dummy(tlbr=[-5, -5, 50, 50], track_id=1, score=0.9),
         Dummy(tlwh=[90, 70, 20, 20], track_id=2, score=0.8),
@@ -251,6 +253,7 @@ def test_track_coordinate_postprocess() -> None:
     online_ids: list[int] = []
     online_scores: list[float] = []
     online_cls_ids: list[int] = []
+    logger = MODULE.logger
     for t in online_targets:
         if hasattr(t, "tlbr"):
             x1, y1, x2, y2 = map(float, t.tlbr)
@@ -258,7 +261,17 @@ def test_track_coordinate_postprocess() -> None:
             x1, y1, w_, h_ = map(float, t.tlwh)
             x2 = x1 + w_
             y2 = y1 + h_
+        if frame_id <= 3:
+            logger.info(
+                f"  Track ID {getattr(t, 'track_id', '?')}: Raw coords: x1={x1:.1f}, "
+                f"y1={y1:.1f}, x2={x2:.1f}, y2={y2:.1f}"
+            )
+            logger.info(f"  Image dimensions: {w}x{h}")
         if x2 <= x1 or y2 <= y1:
+            if frame_id <= 3:
+                logger.warning(
+                    f"  Invalid bbox dimensions: w={x2 - x1:.1f}, h={y2 - y1:.1f}"
+                )
             continue
         x1 = max(0.0, x1)
         y1 = max(0.0, y1)
@@ -267,8 +280,19 @@ def test_track_coordinate_postprocess() -> None:
         w_box = x2 - x1
         h_box = y2 - y1
         if w_box <= 0 or h_box <= 0:
+            if frame_id <= 3:
+                logger.warning(
+                    f"  Bbox eliminated after clipping: w={w_box:.1f}, h={h_box:.1f}"
+                )
             continue
         tlwh = [x1, y1, w_box, h_box]
+        if frame_id <= 3:
+            logger.info(
+                f"  Final tlwh: [{x1:.1f}, {y1:.1f}, {w_box:.1f}, {h_box:.1f}]"
+            )
+            logger.info(
+                f"  Position as percentage: x={x1 / w * 100:.1f}%, y={y1 / h * 100:.1f}%"
+            )
         tlwhs.append(tlwh)
         online_ids.append(int(t.track_id))
         online_scores.append(float(t.score))
