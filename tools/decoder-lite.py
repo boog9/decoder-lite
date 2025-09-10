@@ -472,6 +472,12 @@ def main() -> None:
 
         raw_im = img_info["raw_img"]
         h, w = raw_im.shape[:2]
+        logger.debug(
+            f"Frame {frame_id}: raw image shape: {raw_im.shape}, h={h}, w={w}"
+        )
+        if not isinstance(w, (int, float)) or not isinstance(h, (int, float)):
+            logger.warning(f"Invalid image dimensions: w={w}, h={h}")
+            continue
         ratio = float(img_info.get("ratio", 1.0))
         if not np.isfinite(ratio) or ratio <= 0:
             ratio = 1.0
@@ -548,20 +554,63 @@ def main() -> None:
         except TypeError:
             in_h, in_w = map(int, getattr(exp, "test_size", (h, w)))
             online_targets = tracker.update(dets_c, (h, w), (in_h, in_w))
+        logger.info(
+            f"Frame {frame_id}: Total online_targets: {len(online_targets)}"
+        )
+        if frame_id <= 3 and online_targets:
+            for i, t in enumerate(online_targets):
+                if hasattr(t, "tlbr"):
+                    logger.info(f"  Target {i}: Raw tlbr = {t.tlbr}")
+                else:
+                    logger.info(f"  Target {i}: Raw tlwh = {t.tlwh}")
+
         for t in online_targets:
             if hasattr(t, "tlbr"):
                 x1, y1, x2, y2 = map(float, t.tlbr)
-                tlwh = [x1, y1, x2 - x1, y2 - y1]
             else:
-                # Already in TLWH format.
-                x, y, w_, h_ = map(float, t.tlwh)
-                tlwh = [x, y, w_, h_]
-            if tlwh[2] * tlwh[3] <= 0:
+                x1, y1, w_, h_ = map(float, t.tlwh)
+                x2 = x1 + w_
+                y2 = y1 + h_
+
+            if frame_id <= 3:
+                logger.info(
+                    f"  Track ID {getattr(t, 'track_id', '?')}: Before clipping: x1={x1:.1f}, "
+                    f"y1={y1:.1f}, x2={x2:.1f}, y2={y2:.1f}"
+                )
+
+            if x2 <= x1 or y2 <= y1:
                 continue
+
+            x1 = max(0.0, x1)
+            y1 = max(0.0, y1)
+            x2 = min(float(w), x2)
+            y2 = min(float(h), y2)
+
+            w_box = x2 - x1
+            h_box = y2 - y1
+            if w_box <= 0 or h_box <= 0:
+                continue
+
+            if frame_id <= 3:
+                logger.info(
+                    f"  Track ID {getattr(t, 'track_id', '?')}: After clipping: x1={x1:.1f}, "
+                    f"y1={y1:.1f}, w={w_box:.1f}, h={h_box:.1f}"
+                )
+
+            tlwh = [x1, y1, w_box, h_box]
+            if frame_id == 1 and hasattr(t, "tlbr"):
+                logger.info(f"Original tlbr: {t.tlbr}, converted tlwh: {tlwh}")
             tlwhs.append(tlwh)
             online_ids.append(int(t.track_id))
             online_scores.append(float(t.score))
             online_cls_ids.append(int(getattr(t, "cls", -1)))
+
+        if frame_id <= 3 and tlwhs:
+            logger.info(
+                f"Frame {frame_id}: processed {len(tlwhs)} tracks. "
+                f"First track tlwh: {tlwhs[0]} Image size: {w}x{h}"
+            )
+
         if len(tlwhs) == 0 and dets_for_tracker.size > 0:
             logger.debug(
                 f"No tracks after filter; dets present. Check min_box_area={args.min_box_area} / tracker thresholds."
@@ -575,6 +624,17 @@ def main() -> None:
         fps = float(fps_meter.update(_dt) or 0.0)
 
         draw_im = np.ascontiguousarray(raw_im.copy())
+        if frame_id <= 3 and tlwhs:
+            logger.info(f"Frame {frame_id} calling plot_tracking with:")
+            logger.info(f"  Image shape: {draw_im.shape}")
+            logger.info(f"  Number of tracks: {len(tlwhs)}")
+            logger.info(f"  Sample tlwh: {tlwhs[0]}")
+            logger.info(
+                f"  Sample ID: {online_ids[0] if online_ids else 'None'}"
+            )
+            logger.info(
+                f"  Sample score: {online_scores[0] if online_scores else 'None'}"
+            )
         annotated = call_with_supported_kwargs(
             plot_tracking,
             draw_im,

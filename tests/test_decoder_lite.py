@@ -232,3 +232,49 @@ def test_json_default_handles_numpy_and_torch() -> None:
 
         dump = json.dumps({"t": torch.tensor([1, 2])}, default=MODULE._json_default)
         assert json.loads(dump)["t"] == [1, 2]
+
+
+def test_track_coordinate_postprocess() -> None:
+    """Coordinates from tracker are converted and clipped correctly."""
+
+    class Dummy:
+        def __init__(self, **kwargs: Any) -> None:
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
+    w, h = 100, 80
+    online_targets = [
+        Dummy(tlbr=[-5, -5, 50, 50], track_id=1, score=0.9),
+        Dummy(tlwh=[90, 70, 20, 20], track_id=2, score=0.8),
+    ]
+    tlwhs: list[list[float]] = []
+    online_ids: list[int] = []
+    online_scores: list[float] = []
+    online_cls_ids: list[int] = []
+    for t in online_targets:
+        if hasattr(t, "tlbr"):
+            x1, y1, x2, y2 = map(float, t.tlbr)
+        else:
+            x1, y1, w_, h_ = map(float, t.tlwh)
+            x2 = x1 + w_
+            y2 = y1 + h_
+        if x2 <= x1 or y2 <= y1:
+            continue
+        x1 = max(0.0, x1)
+        y1 = max(0.0, y1)
+        x2 = min(float(w), x2)
+        y2 = min(float(h), y2)
+        w_box = x2 - x1
+        h_box = y2 - y1
+        if w_box <= 0 or h_box <= 0:
+            continue
+        tlwh = [x1, y1, w_box, h_box]
+        tlwhs.append(tlwh)
+        online_ids.append(int(t.track_id))
+        online_scores.append(float(t.score))
+        online_cls_ids.append(int(getattr(t, "cls", -1)))
+
+    assert tlwhs == [[0.0, 0.0, 50.0, 50.0], [90.0, 70.0, 10.0, 10.0]]
+    assert online_ids == [1, 2]
+    assert online_scores == [0.9, 0.8]
+    assert online_cls_ids == [-1, -1]
