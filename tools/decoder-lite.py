@@ -571,13 +571,11 @@ def main() -> None:
                 x1, y1, w_, h_ = map(float, t.tlwh)
                 x2 = x1 + w_
                 y2 = y1 + h_
-
             if frame_id <= 3:
                 logger.info(
                     f"  Track ID {getattr(t, 'track_id', '?')}: Before clipping: x1={x1:.1f}, "
                     f"y1={y1:.1f}, x2={x2:.1f}, y2={y2:.1f}"
                 )
-
             if x2 <= x1 or y2 <= y1:
                 continue
 
@@ -596,7 +594,6 @@ def main() -> None:
                     f"  Track ID {getattr(t, 'track_id', '?')}: After clipping: x1={x1:.1f}, "
                     f"y1={y1:.1f}, w={w_box:.1f}, h={h_box:.1f}"
                 )
-
             tlwh = [x1, y1, w_box, h_box]
             if frame_id == 1 and hasattr(t, "tlbr"):
                 logger.info(f"Original tlbr: {t.tlbr}, converted tlwh: {tlwh}")
