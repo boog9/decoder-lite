@@ -491,8 +491,8 @@ def main() -> None:
             dw, dh = (0.0, 0.0)
             if "pad" in img_info:
                 dw, dh = img_info["pad"]
-            bboxes_xyxy[:, [0, 2]] -= float(dw)
-            bboxes_xyxy[:, [1, 3]] -= float(dh)
+                bboxes_xyxy[:, [0, 2]] -= float(dw)
+                bboxes_xyxy[:, [1, 3]] -= float(dh)
             bboxes_xyxy /= ratio
             bboxes_xyxy[:, 0::2] = np.clip(bboxes_xyxy[:, 0::2], 0, w - 1)
             bboxes_xyxy[:, 1::2] = np.clip(bboxes_xyxy[:, 1::2], 0, h - 1)
@@ -533,16 +533,10 @@ def main() -> None:
             scores = scores[mask]
             cls_ids = cls_ids[mask]
 
-        # ByteTrack expects TLWH + score
         if bboxes_xyxy.size == 0:
             dets_for_tracker = np.zeros((0, 5), dtype=np.float32)
         else:
-            tlwh_in = np.empty_like(bboxes_xyxy, dtype=np.float32)
-            tlwh_in[:, 0] = bboxes_xyxy[:, 0]
-            tlwh_in[:, 1] = bboxes_xyxy[:, 1]
-            tlwh_in[:, 2] = bboxes_xyxy[:, 2] - bboxes_xyxy[:, 0]
-            tlwh_in[:, 3] = bboxes_xyxy[:, 3] - bboxes_xyxy[:, 1]
-            dets_for_tracker = np.hstack([tlwh_in, scores[:, None]]).astype(
+            dets_for_tracker = np.hstack([bboxes_xyxy, scores[:, None]]).astype(
                 np.float32, copy=False
             )
         dets_c = np.ascontiguousarray(dets_for_tracker)
@@ -555,11 +549,16 @@ def main() -> None:
             in_h, in_w = map(int, getattr(exp, "test_size", (h, w)))
             online_targets = tracker.update(dets_c, (h, w), (in_h, in_w))
         for t in online_targets:
-            # Draw exactly the TLWH provided by the tracker
-            tlwh = np.asarray(t.tlwh, dtype=np.float32)
+            if hasattr(t, "tlbr"):
+                x1, y1, x2, y2 = map(float, t.tlbr)
+                tlwh = [x1, y1, x2 - x1, y2 - y1]
+            else:
+                # Already in TLWH format.
+                x, y, w_, h_ = map(float, t.tlwh)
+                tlwh = [x, y, w_, h_]
             if tlwh[2] * tlwh[3] <= 0:
                 continue
-            tlwhs.append(tlwh.tolist())
+            tlwhs.append(tlwh)
             online_ids.append(int(t.track_id))
             online_scores.append(float(t.score))
             online_cls_ids.append(int(getattr(t, "cls", -1)))
