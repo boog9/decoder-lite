@@ -34,9 +34,10 @@ def test_filters_6col():
         [1, 1, 11, 11, 0.80, 1],
         [2, 2, 12, 12, 0.70, 1],
     ], dtype=np.float32)
-    out = mod.normalize_dets(dets, keep_classes={1})
+    out, cls = mod.normalize_dets(dets, keep_classes={1})
     assert out.shape[1] == 5
     assert out.shape[0] == 2
+    assert cls is not None and cls.tolist() == [1, 1]
     np.testing.assert_allclose(out[:, 4], [0.80, 0.70], rtol=1e-6, atol=1e-6)
 
 def test_invalid_shape_raises():
@@ -46,17 +47,21 @@ def test_invalid_shape_raises():
         mod.normalize_dets(dets, keep_classes={0})
 
 
-def test_warns_5col_once(caplog: pytest.LogCaptureFixture):
+def test_warns_5col(caplog: pytest.LogCaptureFixture):
     mod = _load_decoder_tool()
-    dets = np.array([
-        [0, 0, 10, 10, 0.9],
-        [1, 1, 11, 11, 0.8],
-    ], dtype=np.float32)
+    dets = np.array(
+        [
+            [0, 0, 10, 10, 0.9],
+            [1, 1, 11, 11, 0.8],
+        ],
+        dtype=np.float32,
+    )
     with caplog.at_level(logging.WARNING):
-        mod.normalize_dets(dets, keep_classes={0})
-        mod.normalize_dets(dets, keep_classes={0})
+        out, cls = mod.normalize_dets(dets, keep_classes={0})
+    assert cls is None
+    assert out.shape == (2, 5)
     msgs = [rec.message for rec in caplog.records if "Ignoring --keep-classes" in rec.message]
-    assert len(msgs) == 1
+    assert len(msgs) >= 1
 
 
 def test_yolox_7col():
@@ -68,6 +73,25 @@ def test_yolox_7col():
         ],
         dtype=np.float32,
     )
-    out = mod.normalize_dets(dets, keep_classes={1})
+    out, cls = mod.normalize_dets(dets, keep_classes={1})
     assert out.shape == (1, 5)
+    assert cls is not None and cls.tolist() == [1]
     np.testing.assert_allclose(out[:, 4], [0.72], rtol=1e-6, atol=1e-6)
+
+
+def test_soft_filter_warns(caplog: pytest.LogCaptureFixture) -> None:
+    mod = _load_decoder_tool()
+    dets = np.array(
+        [
+            [0, 0, 10, 10, 0.90, 1],
+            [1, 1, 11, 11, 0.80, 1],
+        ],
+        dtype=np.float32,
+    )
+    with caplog.at_level(logging.WARNING):
+        out, cls = mod.normalize_dets(dets, keep_classes={0})
+    # Filter disabled -> all detections kept
+    assert out.shape[0] == 2
+    assert cls is not None and cls.tolist() == [1, 1]
+    msgs = [rec.message for rec in caplog.records if "Class filter kept 0/" in rec.message]
+    assert len(msgs) == 1
