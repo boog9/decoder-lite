@@ -152,6 +152,33 @@ def parse_keep_classes(s: str | None) -> list[int] | None:
     return [int(x) for x in s.split(",") if x.strip() != ""]
 
 
+def _preproc_topleft(
+    img: np.ndarray, input_size: tuple[int, int]
+) -> tuple[np.ndarray, float, tuple[int, int]]:
+    """Resize and pad image using top-left letterbox as in ByteTrack demo.
+
+    Args:
+        img: Input BGR image.
+        input_size: Desired ``(input_h, input_w)`` size.
+
+    Returns:
+        Tuple containing the preprocessed image, resize ratio and padding
+        offsets ``(dw, dh)``.
+    """
+
+    import cv2  # pragma: no cover
+
+    h0, w0 = img.shape[:2]
+    in_h, in_w = int(input_size[0]), int(input_size[1])
+    r = min(in_h / h0, in_w / w0)
+    new_w, new_h = int(round(w0 * r)), int(round(h0 * r))
+    resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+    canvas = np.full((in_h, in_w, 3), 114, dtype=np.uint8)
+    canvas[0:new_h, 0:new_w] = resized
+    dw, dh = 0, 0
+    return canvas, r, (dw, dh)
+
+
 def filter_by_classes(dets: np.ndarray, keep: Iterable[int]) -> np.ndarray:
     """Filter detection array by class ids.
 
@@ -386,10 +413,11 @@ def main() -> None:
         model=model,
         exp=exp,
         postprocess_fn=postprocess,
-        preproc_fn=preproc,
+        preproc_fn=None,
         device=args.device,
         fp16=False,
     )
+    logger.info("exp.test_size treated as (H,W)=%s", getattr(exp, "test_size", None))
     # fps / frame_rate may already be derived from video or args
     frame_rate = getattr(args, "fps", None)
     if frame_rate is None or frame_rate <= 0:
@@ -462,52 +490,63 @@ def main() -> None:
 
         raw_im = img_info["raw_img"]
         h, w = raw_im.shape[:2]
-        ratio = img_info["ratio"]
+        ratio = float(img_info["ratio"])
+        dw, dh = (0, 0)
+        if "pad" in img_info and isinstance(img_info["pad"], (tuple, list)):
+            dw, dh = int(img_info["pad"][0]), int(img_info["pad"][1])
+        in_h, in_w = img_info.get("input_size", (None, None))
 
         if outputs[0] is None:
+            out_np = np.empty((0, 7), dtype=np.float32)
+        else:
+            out_np = outputs[0].cpu().numpy()
+        num_raw = out_np.shape[0]
+
+        if out_np.size == 0:
             boxes_xyxy = np.empty((0, 4), dtype=np.float32)
             scores = np.empty((0,), dtype=np.float32)
             cls_ids = np.empty((0,), dtype=np.int32)
         else:
-            out_np = outputs[0].cpu().numpy()
-            boxes_xyxy = (out_np[:, 0:4] / ratio).astype(np.float32)
+            boxes_xyxy = out_np[:, 0:4] - np.array([dw, dh, dw, dh], dtype=np.float32)
+            boxes_xyxy = (boxes_xyxy / ratio).astype(np.float32)
             boxes_xyxy[:, 0::2] = np.clip(boxes_xyxy[:, 0::2], 0, w - 1)
             boxes_xyxy[:, 1::2] = np.clip(boxes_xyxy[:, 1::2], 0, h - 1)
+
             if out_np.shape[1] >= 7:
-                # x1,y1,x2,y2, obj, cls_score, cls_id
                 scores = (out_np[:, 4] * out_np[:, 5]).astype(np.float32)
                 cls_ids = out_np[:, 6].astype(np.int32)
             elif out_np.shape[1] == 6:
-                # x1,y1,x2,y2, score, cls_id
                 scores = out_np[:, 4].astype(np.float32)
                 cls_ids = out_np[:, 5].astype(np.int32)
             else:
-                # x1,y1,x2,y2, score (no class column)
                 scores = out_np[:, 4].astype(np.float32)
                 cls_ids = np.empty((0,), dtype=np.int32)
 
-        num_raw = boxes_xyxy.shape[0]
-
         if keep_classes is not None and cls_ids.size:
-            mask = np.isin(cls_ids, keep_classes)
-            boxes_xyxy = boxes_xyxy[mask]
-            scores = scores[mask]
-            cls_ids = cls_ids[mask]
+            m = np.isin(cls_ids, keep_classes)
+            boxes_xyxy = boxes_xyxy[m]
+            scores = scores[m]
+            cls_ids = cls_ids[m]
 
         num_kept = boxes_xyxy.shape[0]
         logger.info(
-            "Frame %d: dets raw=%d kept=%d (classes=%s, ratio=%.6f)",
+            "Frame %d: dets raw=%d kept=%d ratio=%.6f pad=(%d,%d) input_size=%s",
             frame_id,
             num_raw,
             num_kept,
-            "ALL" if keep_classes is None else keep_classes,
-            float(ratio),
+            ratio,
+            dw,
+            dh,
+            img_info.get("input_size"),
         )
         if frame_id == 1 and num_raw:
             sample = min(3, num_raw)
             logger.info(
-                "Sample bboxes (xyxy) raw-scale first %d: %s",
-                sample,
+                "Sample bboxes BEFORE descaling (xyxy): %s",
+                out_np[:sample, 0:4].round(2).tolist(),
+            )
+            logger.info(
+                "Sample bboxes AFTER deletterbox+descale (xyxy): %s",
                 boxes_xyxy[:sample].round(2).tolist(),
             )
 
@@ -519,26 +558,27 @@ def main() -> None:
             )
             assert (boxes_xyxy[:, 0] <= boxes_xyxy[:, 2]).all()
             assert (boxes_xyxy[:, 1] <= boxes_xyxy[:, 3]).all()
+        if dets_for_tracker.size == 0 or dets_for_tracker.shape[1] != 5:
+            dets_for_tracker = np.empty((0, 5), dtype=np.float32)
 
-        if dets_for_tracker.size > 0:
-            try:
-                online_targets = tracker.update(
-                    dets_for_tracker, (h, w)
-                )
-            except TypeError:
-                online_targets = tracker.update(
-                    dets_for_tracker,
-                    (h, w),
-                    exp.test_size,
-                )
-            for t in online_targets:
-                tlwh = t.tlwh
-                if tlwh[2] * tlwh[3] <= 0:
-                    continue
-                online_tlwhs.append(tlwh)
-                online_ids.append(t.track_id)
-                online_scores.append(t.score)
-                online_cls_ids.append(getattr(t, "cls", -1))
+        try:
+            online_targets = tracker.update(
+                np.ascontiguousarray(dets_for_tracker), (h, w)
+            )
+        except TypeError:
+            in_h = img_info.get("input_size", (None, None))[0]
+            in_w = img_info.get("input_size", (None, None))[1]
+            online_targets = tracker.update(
+                np.ascontiguousarray(dets_for_tracker), (h, w), (in_h, in_w)
+            )
+        for t in online_targets:
+            tlwh = t.tlwh
+            if tlwh[2] * tlwh[3] <= 0:
+                continue
+            online_tlwhs.append(tlwh)
+            online_ids.append(t.track_id)
+            online_scores.append(t.score)
+            online_cls_ids.append(getattr(t, "cls", -1))
         if len(online_tlwhs) == 0 and dets_for_tracker.size > 0:
             logger.debug(
                 "No tracks after filter; dets present. Check min_box_area=%s / tracker thresholds.",
@@ -586,7 +626,7 @@ def main() -> None:
                 break
 
         if args.save_result and writer is not None:
-            writer.write(raw_im if args.save_raw else annotated)
+            writer.write(raw_im if getattr(args, "save_raw", False) else annotated)
             records.append(
                 {
                     "frame": int(frame_id),
@@ -622,7 +662,7 @@ class Predictor:
         self.model = model
         self.exp = exp
         self.postprocess = postprocess_fn
-        self.preproc = preproc_fn
+        self.preproc = preproc_fn or _preproc_topleft
         self.device = device
 
         # Use experiment-provided normalization values if available; otherwise fall back
@@ -663,13 +703,45 @@ class Predictor:
 
         import torch
 
-        img_info = {"raw_img": img, "height": img.shape[0], "width": img.shape[1]}
-        img, ratio = self.preproc(img, self.test_size, self.mean, self.std)
-        img = torch.from_numpy(img).unsqueeze(0)
+        img_info: dict = {
+            "raw_img": img,
+            "height": int(img.shape[0]),
+            "width": int(img.shape[1]),
+        }
+        in_h, in_w = map(int, getattr(self.exp, "test_size", (640, 640)))
+        assert isinstance(in_h, int) and isinstance(in_w, int), "test_size must be ints (H,W)"
+        input_size = (in_h, in_w)
+        proc_res = self.preproc(img, input_size)
+        if not isinstance(proc_res, tuple) or len(proc_res) not in {2, 3}:
+            raise ValueError("preproc_fn must return (img, ratio[, pad])")
+        if len(proc_res) == 3:
+            proc_img, ratio, pad = proc_res
+            dw, dh = pad
+        else:
+            proc_img, ratio = proc_res
+            dw, dh = (0, 0)
+        assert 0.05 < ratio < 50.0, f"ratio suspicious: {ratio}"
+        img_info.update(
+            {
+                "ratio": float(ratio),
+                "pad": (int(dw), int(dh)),
+                "input_size": (int(in_h), int(in_w)),
+                "raw_shape": (int(img.shape[0]), int(img.shape[1])),
+            }
+        )
+
+        import cv2  # pragma: no cover
+        proc_img = cv2.cvtColor(proc_img, cv2.COLOR_BGR2RGB)
+        proc_img = proc_img.astype(np.float32) / 255.0
+        proc_img = (proc_img - np.array(self.mean, dtype=np.float32)) / np.array(
+            self.std, dtype=np.float32
+        )
+        proc_img = proc_img.transpose(2, 0, 1)
+        img_tensor = torch.from_numpy(proc_img).unsqueeze(0)
         if self.device == "gpu":
-            img = img.cuda()
+            img_tensor = img_tensor.cuda()
         with torch.no_grad():
-            outputs = self.model(img)
+            outputs = self.model(img_tensor)
             # --- YOLOX/ByteTrack postprocess compatibility shim ---
             pp = getattr(self, "postprocess", None)
             if pp is None:
@@ -700,7 +772,6 @@ class Predictor:
                     except TypeError:
                         outputs = pp(outputs, self.num_classes, conf, nms)
             # --- end shim ---
-        img_info["ratio"] = ratio
         return outputs, img_info
 
 
