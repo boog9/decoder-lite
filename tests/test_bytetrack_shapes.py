@@ -45,11 +45,11 @@ class DummyTracker:
 
 
 @pytest.mark.skipif(np is None, reason="numpy not available")
-@pytest.mark.parametrize("cols", [7, 5])
+@pytest.mark.parametrize("cols", [6, 5])
 def test_bytetrack_shapes(cols: int) -> None:
     dets = np.zeros((1, cols), dtype=float)
-    if cols >= 7:
-        dets[0, 4:7] = [0.9, 0.8, 0]
+    if cols == 6:
+        dets[0, 4:6] = [0.9, 0]
     else:
         dets[0, 4] = 0.9
     img_info = {"ratio": 1.0, "height": 100, "width": 100}
