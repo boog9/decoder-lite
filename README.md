@@ -86,7 +86,10 @@ make run FILE=video.mp4 EXTRA="--save_result --save-raw"
 
 The Makefile adds `--no-display` for headless execution. Remove the flag to view a window.
 
-Results are written to `outputs/videos/result.mp4` and logs to `outputs/logs/result.json`.
+Frames are always annotated in memory. Display happens only when a screen is
+available, but the video file always receives the annotated frames unless
+`--save-raw` is specified. Results are written to `outputs/videos/result.mp4`
+and logs to `outputs/logs/result.json`.
 
 Use the `--keep-classes` flag to restrict tracking to specific class IDs. If the
 detector outputs only five columns (no class column), the flag is ignored and a
