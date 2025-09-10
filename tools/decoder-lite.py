@@ -3,7 +3,9 @@
 
 This script is a thin wrapper around the official ByteTrack demo. It adds the
 ability to keep only a subset of COCO classes before feeding detections to the
-tracker. By default, only classes 0 (person) and 32 (sports ball) are kept.
+tracker. By default, all classes are kept. Use ``--keep-classes`` to restrict
+tracking to specific COCO class IDs, for example ``--keep-classes 0,32`` to keep
+only persons and sports balls.
 
 Example:
     python tools/decoder-lite.py \
@@ -141,20 +143,18 @@ class FpsEMA:
 def parse_keep_classes(s: str | None) -> list[int] | None:
     """Parse a comma-separated string of class IDs.
 
-    ``None`` or an empty string disables filtering and returns ``None``.
-
     Args:
         s: Comma-separated class ID string or ``None``.
 
     Returns:
-        ``None`` if filtering should be disabled, otherwise a list of integers.
+        ``None`` to keep all classes or a list of class identifiers to retain.
     """
 
     if s is None:
         return None
     s = s.strip()
-    if s == "":
-        # Empty string means no filtering (ALL classes kept).
+    if s == "" or s.upper() == "ALL":
+        # Empty string or explicit "ALL" disables class filtering.
         return None
     return [int(x) for x in s.split(",") if x.strip() != ""]
 
@@ -314,7 +314,7 @@ def make_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help=(
-            "Comma-separated COCO class ids. None/empty => no filtering. "
+            "Comma-separated COCO class ids. None/empty/'ALL' => no filtering. "
             "5-col inputs lack a class column, so this flag is ignored with a "
             "warning."
         ),
@@ -535,6 +535,12 @@ def main() -> None:
 
         if keep_classes is not None and cls_ids.size:
             mask = np.isin(cls_ids, keep_classes)
+            if not np.any(mask):
+                logger.warning(
+                    "Class filter kept 0/%d dets; disabling filter for this frame.",
+                    len(cls_ids),
+                )
+                mask = np.ones_like(mask, dtype=bool)
             bboxes_xyxy = bboxes_xyxy[mask]
             scores = scores[mask]
             cls_ids = cls_ids[mask]
@@ -557,28 +563,35 @@ def main() -> None:
         logger.info(
             f"Frame {frame_id}: Total online_targets: {len(online_targets)}"
         )
-        if frame_id <= 3 and online_targets:
-            for i, t in enumerate(online_targets):
-                if hasattr(t, "tlbr"):
-                    logger.info(f"  Target {i}: Raw tlbr = {t.tlbr}")
-                else:
-                    logger.info(f"  Target {i}: Raw tlwh = {t.tlwh}")
 
         for t in online_targets:
+            # ByteTrack may expose tlbr or tlwh; convert accordingly
             if hasattr(t, "tlbr"):
                 x1, y1, x2, y2 = map(float, t.tlbr)
             else:
                 x1, y1, w_, h_ = map(float, t.tlwh)
                 x2 = x1 + w_
                 y2 = y1 + h_
+
+            # Diagnostic logging for the first few frames
             if frame_id <= 3:
                 logger.info(
-                    f"  Track ID {getattr(t, 'track_id', '?')}: Before clipping: x1={x1:.1f}, "
+                    f"  Track ID {getattr(t, 'track_id', '?')}: Raw coords: x1={x1:.1f}, "
                     f"y1={y1:.1f}, x2={x2:.1f}, y2={y2:.1f}"
                 )
+                logger.info(
+                    f"  Image dimensions: {w}x{h}, ratio used for detections: {ratio:.6f}"
+                )
+
+            # Validate bbox dimensions
             if x2 <= x1 or y2 <= y1:
+                if frame_id <= 3:
+                    logger.warning(
+                        f"  Invalid bbox dimensions: w={x2 - x1:.1f}, h={y2 - y1:.1f}"
+                    )
                 continue
 
+            # Clip to image bounds
             x1 = max(0.0, x1)
             y1 = max(0.0, y1)
             x2 = min(float(w), x2)
@@ -586,17 +599,24 @@ def main() -> None:
 
             w_box = x2 - x1
             h_box = y2 - y1
+
             if w_box <= 0 or h_box <= 0:
+                if frame_id <= 3:
+                    logger.warning(
+                        f"  Bbox eliminated after clipping: w={w_box:.1f}, h={h_box:.1f}"
+                    )
                 continue
+
+            tlwh = [x1, y1, w_box, h_box]
 
             if frame_id <= 3:
                 logger.info(
-                    f"  Track ID {getattr(t, 'track_id', '?')}: After clipping: x1={x1:.1f}, "
-                    f"y1={y1:.1f}, w={w_box:.1f}, h={h_box:.1f}"
+                    f"  Final tlwh: [{x1:.1f}, {y1:.1f}, {w_box:.1f}, {h_box:.1f}]"
                 )
-            tlwh = [x1, y1, w_box, h_box]
-            if frame_id == 1 and hasattr(t, "tlbr"):
-                logger.info(f"Original tlbr: {t.tlbr}, converted tlwh: {tlwh}")
+                logger.info(
+                    f"  Position as percentage: x={x1 / w * 100:.1f}%, y={y1 / h * 100:.1f}%"
+                )
+
             tlwhs.append(tlwh)
             online_ids.append(int(t.track_id))
             online_scores.append(float(t.score))
