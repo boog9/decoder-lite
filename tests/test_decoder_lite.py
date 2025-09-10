@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import pathlib
 from typing import Any
 
@@ -204,3 +205,16 @@ def test_call_with_supported_kwargs_respects_signature() -> None:
         "frame_id": 1,
         "fps": 2.0,
     }
+
+
+def test_json_default_handles_numpy_and_torch() -> None:
+    np = pytest.importorskip("numpy")
+    assert MODULE._json_default(np.array([1, 2])) == [1, 2]
+    assert MODULE._json_default(np.float32(3.0)) == 3.0
+    dump = json.dumps({"x": np.array([1])}, default=MODULE._json_default)
+    assert json.loads(dump)["x"] == [1]
+    if MODULE.torch is not None:
+        import torch
+
+        dump = json.dumps({"t": torch.tensor([1, 2])}, default=MODULE._json_default)
+        assert json.loads(dump)["t"] == [1, 2]
