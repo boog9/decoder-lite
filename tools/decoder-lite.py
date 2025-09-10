@@ -33,7 +33,7 @@ import time
 import inspect
 from types import SimpleNamespace
 from pathlib import Path
-from typing import Any, Iterable, Optional, Set
+from typing import Any, Iterable, Optional, Set, List
 
 import logging
 import numpy as np
@@ -145,11 +145,11 @@ def parse_keep_classes(s: str | None) -> list[int] | None:
 
     if s is None:
         return None
-    cleaned = s.strip()
-    if cleaned == "":
-        # Critical: empty string means no filtering at all.
+    s = s.strip()
+    if s == "":
+        # Empty string means no filtering (ALL classes kept).
         return None
-    return [int(x) for x in cleaned.split(",") if x.strip() != ""]
+    return [int(x) for x in s.split(",") if x.strip() != ""]
 
 
 def filter_by_classes(dets: np.ndarray, keep: Iterable[int]) -> np.ndarray:
@@ -460,38 +460,75 @@ def main() -> None:
         online_scores: List[float] = []
         online_cls_ids: List[int] = []
 
+        raw_im = img_info["raw_img"]
+        h, w = raw_im.shape[:2]
+        ratio = img_info["ratio"]
+
         if outputs[0] is None:
-            bboxes_xyxy = np.empty((0, 4), dtype=np.float32)
+            boxes_xyxy = np.empty((0, 4), dtype=np.float32)
             scores = np.empty((0,), dtype=np.float32)
             cls_ids = np.empty((0,), dtype=np.int32)
         else:
             out_np = outputs[0].cpu().numpy()
-            bboxes_xyxy = out_np[:, 0:4] / img_info["ratio"]
-            scores = out_np[:, 4]
-            cls_ids = out_np[:, 6].astype(np.int32)
+            boxes_xyxy = (out_np[:, 0:4] / ratio).astype(np.float32)
+            boxes_xyxy[:, 0::2] = np.clip(boxes_xyxy[:, 0::2], 0, w - 1)
+            boxes_xyxy[:, 1::2] = np.clip(boxes_xyxy[:, 1::2], 0, h - 1)
+            if out_np.shape[1] >= 7:
+                # x1,y1,x2,y2, obj, cls_score, cls_id
+                scores = (out_np[:, 4] * out_np[:, 5]).astype(np.float32)
+                cls_ids = out_np[:, 6].astype(np.int32)
+            elif out_np.shape[1] == 6:
+                # x1,y1,x2,y2, score, cls_id
+                scores = out_np[:, 4].astype(np.float32)
+                cls_ids = out_np[:, 5].astype(np.int32)
+            else:
+                # x1,y1,x2,y2, score (no class column)
+                scores = out_np[:, 4].astype(np.float32)
+                cls_ids = np.empty((0,), dtype=np.int32)
 
-        if keep_classes is not None:
+        num_raw = boxes_xyxy.shape[0]
+
+        if keep_classes is not None and cls_ids.size:
             mask = np.isin(cls_ids, keep_classes)
-            bboxes_xyxy = bboxes_xyxy[mask]
+            boxes_xyxy = boxes_xyxy[mask]
             scores = scores[mask]
             cls_ids = cls_ids[mask]
 
-        if bboxes_xyxy.size == 0:
+        num_kept = boxes_xyxy.shape[0]
+        logger.info(
+            "Frame %d: dets raw=%d kept=%d (classes=%s, ratio=%.6f)",
+            frame_id,
+            num_raw,
+            num_kept,
+            "ALL" if keep_classes is None else keep_classes,
+            float(ratio),
+        )
+        if frame_id == 1 and num_raw:
+            sample = min(3, num_raw)
+            logger.info(
+                "Sample bboxes (xyxy) raw-scale first %d: %s",
+                sample,
+                boxes_xyxy[:sample].round(2).tolist(),
+            )
+
+        if boxes_xyxy.size == 0:
             dets_for_tracker = np.empty((0, 5), dtype=np.float32)
         else:
-            dets_for_tracker = np.hstack([bboxes_xyxy, scores[:, None]]).astype(
+            dets_for_tracker = np.hstack([boxes_xyxy, scores[:, None]]).astype(
                 np.float32
             )
+            assert (boxes_xyxy[:, 0] <= boxes_xyxy[:, 2]).all()
+            assert (boxes_xyxy[:, 1] <= boxes_xyxy[:, 3]).all()
 
         if dets_for_tracker.size > 0:
             try:
                 online_targets = tracker.update(
-                    dets_for_tracker, img_info["raw_img"].shape[:2]
+                    dets_for_tracker, (h, w)
                 )
             except TypeError:
                 online_targets = tracker.update(
                     dets_for_tracker,
-                    img_info["raw_img"].shape[:2],
+                    (h, w),
                     exp.test_size,
                 )
             for t in online_targets:
@@ -515,63 +552,41 @@ def main() -> None:
             _prev_ts = _now
         fps = float(fps_meter.update(_dt) or 0.0)
 
-        raw_im = img_info["raw_img"]
-        raw_copy = raw_im.copy()
-        vis_im = call_with_supported_kwargs(
+        frame_for_draw = raw_im.copy()
+        annotated = call_with_supported_kwargs(
             plot_tracking,
-            raw_im,
+            frame_for_draw,
             online_tlwhs,
             online_ids,
             scores=online_scores,
             frame_id=frame_id,
             fps=fps,
-            cls_ids=online_cls_ids if online_cls_ids else None,
+            cls_ids=(
+                online_cls_ids if any(x >= 0 for x in online_cls_ids) else None
+            ),
         )
 
-        if args.save_result:
-            if not (
-                len(online_tlwhs)
-                == len(online_ids)
-                == len(online_scores)
-                == len(online_cls_ids)
-            ):
-                logger.warning(
-                    "Lens mismatch: tlwhs=%d ids=%d scores=%d cls=%d",
-                    len(online_tlwhs),
-                    len(online_ids),
-                    len(online_scores),
-                    len(online_cls_ids),
-                )
-            if online_tlwhs:
-                x, y, w, h = online_tlwhs[0]
-                x1, y1, x2, y2 = map(int, (x, y, x + w, y + h))
-                H, W = vis_im.shape[:2]
-                x1 = max(0, min(W - 1, x1))
-                y1 = max(0, min(H - 1, y1))
-                x2 = max(0, min(W - 1, x2))
-                y2 = max(0, min(H - 1, y2))
-                cv2.rectangle(vis_im, (x1, y1), (x2, y2), (0, 255, 0), 3)
-                cv2.putText(
-                    vis_im,
-                    f"DBG id={online_ids[0]}",
-                    (x1, max(0, y1 - 10)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.8,
-                    (0, 255, 0),
-                    2,
-                    cv2.LINE_AA,
-                )
-            H, W = vis_im.shape[:2]
-            cv2.circle(vis_im, (W // 2, H // 2), 12, (255, 0, 255), -1)
+        if args.save_result and not (
+            len(online_tlwhs)
+            == len(online_ids)
+            == len(online_scores)
+            == len(online_cls_ids)
+        ):
+            logger.warning(
+                "Lens mismatch: tlwhs=%d ids=%d scores=%d cls=%d",
+                len(online_tlwhs),
+                len(online_ids),
+                len(online_scores),
+                len(online_cls_ids),
+            )
 
         if not args.no_display:
-            cv2.imshow("ByteTrack", vis_im)
+            cv2.imshow("ByteTrack", annotated)
             if cv2.waitKey(1) == 27:
                 break
 
         if args.save_result and writer is not None:
-            frame_to_write = raw_copy if getattr(args, "save_raw", False) else vis_im
-            writer.write(frame_to_write)
+            writer.write(raw_im if args.save_raw else annotated)
             records.append(
                 {
                     "frame": int(frame_id),
