@@ -57,7 +57,7 @@ def test_bytetrack_shapes(cols: int) -> None:
     img_info = {"ratio": 1.0, "height": 100, "width": 100}
     dets[:, :4] /= img_info["ratio"]
 
-    dets_in = normalize_dets(dets, {0, 32})
+    dets_in, _ = normalize_dets(dets, {0, 32})
     tracker = DummyTracker()
     tracker.update(dets_in, [img_info["height"], img_info["width"]], (640, 640))
     assert tracker.calls == 1

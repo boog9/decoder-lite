@@ -58,9 +58,6 @@ except ModuleNotFoundError:  # pragma: no cover
     )
 
 
-_WARNED_NO_CLASS = False
-
-
 def _json_default(obj: Any) -> Any:
     """Serialize NumPy and torch objects for JSON output.
 
@@ -176,68 +173,85 @@ def filter_by_classes(dets: np.ndarray, keep: Iterable[int]) -> np.ndarray:
 
 def normalize_dets(
     dets: np.ndarray,
-    keep_classes: Optional[Set[int]] = None,
-) -> np.ndarray:
-    """Normalize raw detector outputs to ByteTrack format.
+    keep_classes: set[int] | None = None,
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """Normalize raw detector outputs and optionally filter by class.
 
-    Supported input shapes:
-      * ``(N, 5)`` – ``[x1, y1, x2, y2, score]``
-      * ``(N, 6)`` – ``[x1, y1, x2, y2, score, cls]``
-      * ``(N, 7)`` – ``[x1, y1, x2, y2, obj_conf, cls_conf, cls]`` (YOLOX style)
+    Supports YOLOX detection formats:
+
+      * ``(N,5)``: ``[x1,y1,x2,y2,score]``
+      * ``(N,6)``: ``[x1,y1,x2,y2,score,cls]``
+      * ``(N,7)``: ``[x1,y1,x2,y2,obj_conf,cls_conf,cls]``
+
+    The returned tuple contains the normalized detections ``dets_in`` of shape
+    ``(M,5)`` and the integer class array ``cls_or_none`` (``(M,)``) if class
+    information is available; otherwise ``None``.
+
+    Class filtering is "soft" – if ``keep_classes`` filters out all detections in
+    a frame, the filter is disabled for that frame and a warning is logged.
 
     Args:
-        dets: Detection array in one of the above formats.
-        keep_classes: Optional set of class IDs to retain when class
-            information is available.
+        dets: Raw detector outputs.
+        keep_classes: Optional set of class IDs to retain.
 
     Returns:
-        Array of shape ``(M, 5)`` containing ``[x1, y1, x2, y2, score]``.
+        Tuple of normalized detections and optional class IDs.
 
     Raises:
-        ValueError: If ``dets`` does not have five, six, or seven columns.
+        ValueError: If ``dets`` has an unexpected shape.
     """
 
-    if dets is None or dets.size == 0:
-        return np.empty((0, 5), dtype=np.float32)
-
-    if dets.ndim != 2:
-        raise ValueError(
-            f"Unexpected dets ndim {dets.ndim}; expected 2 with shape (N,5|6|7)."
-        )
+    if dets.size == 0:
+        return dets, None
 
     cols = dets.shape[1]
 
     if cols == 5:
-        if keep_classes:
-            global _WARNED_NO_CLASS
-            if not _WARNED_NO_CLASS:
-                logger.warning(
-                    "Detector outputs 5 columns (no class). Ignoring --keep-classes."
-                )
-                _WARNED_NO_CLASS = True
         xyxy = dets[:, :4]
         score = dets[:, 4:5]
-        return np.concatenate([xyxy, score], axis=1).astype(np.float32, copy=False)
+        if keep_classes:
+            logger.warning(
+                "Detector outputs 5 columns (no class). Ignoring --keep-classes."
+            )
+        dets_in = np.concatenate([xyxy, score], axis=1)
+        return dets_in, None
 
     if cols == 6:
         xyxy = dets[:, :4]
         score = dets[:, 4:5]
         cls = dets[:, 5].astype(int)
+        kept = np.ones(len(cls), dtype=bool)
         if keep_classes:
-            mask = np.isin(cls, list(keep_classes))
-            xyxy, score = xyxy[mask], score[mask]
-        return np.concatenate([xyxy, score], axis=1).astype(np.float32, copy=False)
+            kept = np.isin(cls, list(keep_classes))
+            if not np.any(kept):
+                logger.warning(
+                    "Class filter kept 0/ %d dets; disabling filter for this frame.",
+                    len(cls),
+                )
+                kept = np.ones(len(cls), dtype=bool)
+        xyxy, score, cls = xyxy[kept], score[kept], cls[kept]
+        dets_in = np.concatenate([xyxy, score], axis=1)
+        return dets_in, cls
 
     if cols == 7:
         xyxy = dets[:, :4]
         obj = dets[:, 4]
-        conf = dets[:, 5]
-        score = np.clip(obj * conf, 0.0, 1.0).reshape(-1, 1)
+        ccnf = dets[:, 5]
+        score = (obj * ccnf).reshape(-1, 1)
+        score = np.clip(score, 0.0, 1.0)
         cls = dets[:, 6].astype(int)
+        kept = np.ones(len(cls), dtype=bool)
         if keep_classes:
-            mask = np.isin(cls, list(keep_classes))
-            xyxy, score = xyxy[mask], score[mask]
-        return np.concatenate([xyxy, score], axis=1).astype(np.float32, copy=False)
+            kept = np.isin(cls, list(keep_classes))
+            if not np.any(kept):
+                logger.warning(
+                    "Class filter kept 0/ %d dets; disabling filter for this frame.",
+                    len(cls),
+                )
+                kept = np.ones(len(cls), dtype=bool)
+        xyxy, score, cls = xyxy[kept], score[kept], cls[kept]
+        dets_in = np.concatenate([xyxy, score], axis=1)
+        return dets_in, cls
 
     raise ValueError(f"Unexpected dets shape {dets.shape}; expected (N,5|6|7).")
 
@@ -446,8 +460,10 @@ def main() -> None:
         )
         if dets.size > 0:
             dets[:, :4] /= img_info["ratio"]
-        logger.info("Frame %d: dets shape after rescale: %s", frame_id, dets.shape)
-        dets_in = normalize_dets(dets, keep_classes)
+        logger.info(
+            "Frame %d: dets shape after rescale: %s", frame_id, tuple(dets.shape)
+        )
+        dets_in, det_cls = normalize_dets(dets, keep_classes)
         logger.info(
             "Frame %d: kept %d/%d detections (after class filter and rescale)",
             frame_id,

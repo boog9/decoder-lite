@@ -94,7 +94,11 @@ instead. JSON logs are written to `outputs/logs/result.json`.
 
 Use the `--keep-classes` flag to restrict tracking to specific class IDs. If the
 detector outputs only five columns (no class column), the flag is ignored and a
-warning is logged.
+warning is logged. YOLOX detections with five, six, or seven columns are
+supported; for the seven-column variant the final score is ``obj_conf *
+cls_conf``. Class filtering is "soft": if the filter removes all detections in a
+frame, it is disabled for that frame and a warning is emitted so visualization
+is preserved.
 
 ## Notes
 - Only COCO classes 0 and 32 are processed.
