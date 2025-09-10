@@ -174,8 +174,8 @@ def filter_by_classes(dets: np.ndarray, keep: Iterable[int]) -> np.ndarray:
     """
     if np is None:
         raise ModuleNotFoundError("numpy is required for filter_by_classes")
-    if dets.size == 0:
-        return dets
+    if dets.size == 0 or dets.shape[0] == 0:
+        return np.zeros((0, 5), dtype=np.float32)
     if dets.shape[1] < 6:
         return dets
     keep_set: Set[int] = set(keep)
@@ -465,14 +465,16 @@ def main() -> None:
         timer.tic()
         outputs, img_info = predictor.inference(frame, args.conf, args.nms)
 
-        online_tlwhs: List[List[float]] = []
+        tlwhs: List[List[float]] = []
         online_ids: List[int] = []
         online_scores: List[float] = []
         online_cls_ids: List[int] = []
 
         raw_im = img_info["raw_img"]
         h, w = raw_im.shape[:2]
-        ratio = float(img_info["ratio"])
+        ratio = float(img_info.get("ratio", 1.0))
+        if not np.isfinite(ratio) or ratio <= 0:
+            ratio = 1.0
         out_np = (
             outputs[0].cpu().numpy()
             if (outputs and outputs[0] is not None)
@@ -480,10 +482,32 @@ def main() -> None:
         )
         num_raw = out_np.shape[0]
         if num_raw:
-            bboxes_xyxy = out_np[:, :4].astype(np.float32, copy=False)
+            bboxes_xyxy = out_np[:, :4].astype(np.float32, copy=True)
+            if frame_id == 1:
+                logger.info(
+                    "Sample BEFORE descaling (xyxy) head: %s",
+                    bboxes_xyxy[:3].tolist(),
+                )
+            dw, dh = (0.0, 0.0)
+            if "pad" in img_info:
+                dw, dh = img_info["pad"]
+                bboxes_xyxy[:, [0, 2]] -= float(dw)
+                bboxes_xyxy[:, [1, 3]] -= float(dh)
             bboxes_xyxy /= ratio
             bboxes_xyxy[:, 0::2] = np.clip(bboxes_xyxy[:, 0::2], 0, w - 1)
             bboxes_xyxy[:, 1::2] = np.clip(bboxes_xyxy[:, 1::2], 0, h - 1)
+            if frame_id == 1:
+                logger.info(
+                    "Sample AFTER  descaling (xyxy) head: %s (ratio=%.6f, pad=(%.1f,%.1f))",
+                    bboxes_xyxy[:3].tolist(),
+                    ratio,
+                    dw,
+                    dh,
+                )
+                if ratio != 1.0:
+                    assert not np.allclose(
+                        out_np[:3, :4], bboxes_xyxy[:3, :4]
+                    ), "Descaling failed: AFTER equals BEFORE while ratio != 1"
         else:
             bboxes_xyxy = np.zeros((0, 4), dtype=np.float32)
         assert (bboxes_xyxy[:, 0] <= bboxes_xyxy[:, 2]).all() if bboxes_xyxy.size else True
@@ -502,15 +526,6 @@ def main() -> None:
         else:
             scores = np.empty((0,), dtype=np.float32)
             cls_ids = np.empty((0,), dtype=np.int32)
-
-        if frame_id == 1:
-            sample = min(3, num_raw)
-            logger.info(
-                f"Sample BEFORE descaling (xyxy) head: {out_np[:sample, :4].round(2).tolist()}"
-            )
-            logger.info(
-                f"Sample AFTER  descaling (xyxy) head: {bboxes_xyxy[:sample].round(2).tolist()}"
-            )
 
         if keep_classes is not None and cls_ids.size:
             mask = np.isin(cls_ids, keep_classes)
@@ -534,14 +549,20 @@ def main() -> None:
             in_h, in_w = map(int, getattr(exp, "test_size", (h, w)))
             online_targets = tracker.update(dets_c, (h, w), (in_h, in_w))
         for t in online_targets:
-            tlwh = np.asarray(t.tlwh, dtype=np.float32)
+            if hasattr(t, "tlbr"):
+                x1, y1, x2, y2 = map(float, t.tlbr)
+                tlwh = [x1, y1, x2 - x1, y2 - y1]
+            else:
+                # Already in TLWH format.
+                x, y, w_, h_ = map(float, t.tlwh)
+                tlwh = [x, y, w_, h_]
             if tlwh[2] * tlwh[3] <= 0:
                 continue
-            online_tlwhs.append(tlwh.tolist())
+            tlwhs.append(tlwh)
             online_ids.append(int(t.track_id))
             online_scores.append(float(t.score))
             online_cls_ids.append(int(getattr(t, "cls", -1)))
-        if len(online_tlwhs) == 0 and dets_for_tracker.size > 0:
+        if len(tlwhs) == 0 and dets_for_tracker.size > 0:
             logger.debug(
                 f"No tracks after filter; dets present. Check min_box_area={args.min_box_area} / tracker thresholds."
             )
@@ -553,11 +574,11 @@ def main() -> None:
             _prev_ts = _now
         fps = float(fps_meter.update(_dt) or 0.0)
 
-        raw_copy = np.ascontiguousarray(np.copy(raw_im))
+        draw_im = np.ascontiguousarray(raw_im.copy())
         annotated = call_with_supported_kwargs(
             plot_tracking,
-            raw_copy,
-            online_tlwhs,
+            draw_im,
+            tlwhs,
             online_ids,
             scores=online_scores,
             frame_id=frame_id,
@@ -568,13 +589,13 @@ def main() -> None:
         )
 
         if args.save_result and not (
-            len(online_tlwhs)
+            len(tlwhs)
             == len(online_ids)
             == len(online_scores)
             == len(online_cls_ids)
         ):
             logger.warning(
-                f"Lens mismatch: tlwhs={len(online_tlwhs)} ids={len(online_ids)} "
+                f"Lens mismatch: tlwhs={len(tlwhs)} ids={len(online_ids)} "
                 f"scores={len(online_scores)} cls={len(online_cls_ids)}"
             )
 
@@ -584,11 +605,11 @@ def main() -> None:
                 break
 
         if args.save_result and writer is not None:
-            writer.write(raw_im if getattr(args, "save_raw", False) else annotated)
+            writer.write(raw_im if args.save_raw else annotated)
             records.append(
                 {
                     "frame": int(frame_id),
-                    "tlwh": [[float(v) for v in tlwh] for tlwh in online_tlwhs],
+                    "tlwh": [[float(v) for v in tlwh] for tlwh in tlwhs],
                     "id": [int(i) for i in online_ids],
                     "score": [float(s) for s in online_scores],
                 }
