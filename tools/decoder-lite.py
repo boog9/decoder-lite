@@ -554,6 +554,16 @@ def main() -> None:
         except TypeError:
             in_h, in_w = map(int, getattr(exp, "test_size", (h, w)))
             online_targets = tracker.update(dets_c, (h, w), (in_h, in_w))
+        logger.info(
+            f"Frame {frame_id}: Total online_targets: {len(online_targets)}"
+        )
+        if frame_id <= 3 and online_targets:
+            for i, t in enumerate(online_targets):
+                if hasattr(t, "tlbr"):
+                    logger.info(f"  Target {i}: Raw tlbr = {t.tlbr}")
+                else:
+                    logger.info(f"  Target {i}: Raw tlwh = {t.tlwh}")
+
         for t in online_targets:
             if hasattr(t, "tlbr"):
                 x1, y1, x2, y2 = map(float, t.tlbr)
@@ -561,7 +571,11 @@ def main() -> None:
                 x1, y1, w_, h_ = map(float, t.tlwh)
                 x2 = x1 + w_
                 y2 = y1 + h_
-
+            if frame_id <= 3:
+                logger.info(
+                    f"  Track ID {getattr(t, 'track_id', '?')}: Before clipping: x1={x1:.1f}, "
+                    f"y1={y1:.1f}, x2={x2:.1f}, y2={y2:.1f}"
+                )
             if x2 <= x1 or y2 <= y1:
                 continue
 
@@ -575,6 +589,11 @@ def main() -> None:
             if w_box <= 0 or h_box <= 0:
                 continue
 
+            if frame_id <= 3:
+                logger.info(
+                    f"  Track ID {getattr(t, 'track_id', '?')}: After clipping: x1={x1:.1f}, "
+                    f"y1={y1:.1f}, w={w_box:.1f}, h={h_box:.1f}"
+                )
             tlwh = [x1, y1, w_box, h_box]
             if frame_id == 1 and hasattr(t, "tlbr"):
                 logger.info(f"Original tlbr: {t.tlbr}, converted tlwh: {tlwh}")
