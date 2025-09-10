@@ -33,4 +33,3 @@ def test_numpy_aliases_restored() -> None:
     assert hasattr(np, "float")
     assert hasattr(np, "int")
     assert hasattr(np, "bool")
-    assert hasattr(np, "object")

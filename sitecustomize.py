@@ -38,8 +38,6 @@ try:
         _np.int = int
     if not hasattr(_np, "bool"):
         _np.bool = bool
-    if not hasattr(_np, "object"):
-        _np.object = object
 except Exception:  # pragma: no cover - never fail hard from sitecustomize
     # The environment should remain usable even if NumPy is missing or
     # partially installed, so swallow all exceptions.

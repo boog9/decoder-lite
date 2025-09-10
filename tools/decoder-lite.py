@@ -56,43 +56,27 @@ except ModuleNotFoundError:  # pragma: no cover
     )
 
 
-# --- Compat wrapper for ByteTrack/YOLOX plot_tracking signature differences ---
-def _plot_tracking_compat(
-    plot_fn: Any,
-    img: Any,
-    tlwhs: Sequence[Sequence[float]],
-    ids: Sequence[int],
-    *,
-    scores: Optional[Sequence[float]] = None,
-    frame_id: int = 0,
-    fps: float = 0.0,
-    cls_ids: Optional[Sequence[int]] = None,
-) -> Any:
-    """Call plot_fn with kwargs supported by the installed ByteTrack version.
-
-    Some ByteTrack/YOLOX releases accept ``cls_ids`` in ``plot_tracking`` while
-    others do not. This thin wrapper inspects the function signature and only
-    forwards the argument when supported.
+# --- Generic compat helper: call function with only supported kwargs ---
+def call_with_supported_kwargs(fn: Any, *args: Any, **kwargs: Any) -> Any:
+    """Call ``fn`` with only the kwargs it supports.
 
     Args:
-        plot_fn: Plotting function to invoke.
-        img: Image on which to draw.
-        tlwhs: Bounding boxes in ``tlwh`` format.
-        ids: Tracking IDs.
-        scores: Optional detection scores.
-        frame_id: Frame number.
-        fps: Frames-per-second metric.
-        cls_ids: Optional class IDs for color-coding.
+        fn: Target function.
+        *args: Positional arguments forwarded to ``fn``.
+        **kwargs: Keyword arguments to filter based on ``fn``'s signature.
 
     Returns:
-        Image returned by ``plot_fn``.
+        Result of calling ``fn`` with supported keyword arguments.
     """
 
-    params = inspect.signature(plot_fn).parameters
-    kwargs = {"scores": scores, "frame_id": frame_id, "fps": fps}
-    if "cls_ids" in params:
-        kwargs["cls_ids"] = cls_ids
-    return plot_fn(img, tlwhs, ids, **kwargs)
+    try:
+        params = inspect.signature(fn).parameters
+        filtered = {k: v for k, v in kwargs.items() if k in params}
+    except Exception:
+        # If inspection fails, fall back to calling with no kwargs to avoid
+        # raising unexpected errors.
+        filtered = {}
+    return fn(*args, **filtered)
 
 
 class FpsEMA:
@@ -305,7 +289,10 @@ def main() -> None:
         exp.test_size = (args.tsize, args.tsize)
     model = exp.get_model()
 
-    ckpt = torch.load(args.ckpt, map_location="cpu")
+    try:
+        ckpt = torch.load(args.ckpt, map_location="cpu", weights_only=True)
+    except TypeError:
+        ckpt = torch.load(args.ckpt, map_location="cpu")
     model.load_state_dict(ckpt["model"])
 
     # Force strict FP32 end-to-end to avoid dtype mismatches.
@@ -433,7 +420,7 @@ def main() -> None:
                         _prev_ts = _now
                     _fps = fps_meter.update(_dt)
                     fps = float(_fps) if _fps is not None else 0.0
-                    online_im = _plot_tracking_compat(
+                    online_im = call_with_supported_kwargs(
                         plot_tracking,
                         img_info["raw_img"],
                         online_tlwhs,

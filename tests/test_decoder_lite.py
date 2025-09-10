@@ -31,7 +31,7 @@ SPEC.loader.exec_module(MODULE)
 parse_keep = MODULE.parse_keep
 filter_by_classes = MODULE.filter_by_classes
 FpsEMA = MODULE.FpsEMA
-_plot_tracking_compat = MODULE._plot_tracking_compat
+call_with_supported_kwargs = MODULE.call_with_supported_kwargs
 
 
 def test_make_parser_fp16_flag() -> None:
@@ -149,11 +149,12 @@ def test_inference_postprocess_variants(variant: str) -> None:
         assert args[4] is True
 
 
-def test_plot_tracking_compat_with_cls_ids() -> None:
+def test_call_with_supported_kwargs_respects_signature() -> None:
+    """Ensure helper filters unsupported keyword arguments."""
     record: dict[str, Any] = {}
 
-    def fn(img, tlwhs, ids, *, scores=None, frame_id=0, fps=0.0, cls_ids=None):
-        record["kwargs"] = {
+    def fn_with_cls(img, tlwhs, ids, *, scores=None, frame_id=0, fps=0.0, cls_ids=None):
+        record["with_cls"] = {
             "scores": scores,
             "frame_id": frame_id,
             "fps": fps,
@@ -161,38 +162,16 @@ def test_plot_tracking_compat_with_cls_ids() -> None:
         }
         return "img"
 
-    out = _plot_tracking_compat(
-        fn,
-        "img",
-        [],
-        [],
-        scores=[0.1],
-        frame_id=1,
-        fps=2.0,
-        cls_ids=[3],
-    )
-    assert out == "img"
-    assert record["kwargs"] == {
-        "scores": [0.1],
-        "frame_id": 1,
-        "fps": 2.0,
-        "cls_ids": [3],
-    }
-
-
-def test_plot_tracking_compat_without_cls_ids() -> None:
-    record: dict[str, Any] = {}
-
-    def fn(img, tlwhs, ids, *, scores=None, frame_id=0, fps=0.0):
-        record["kwargs"] = {
+    def fn_without_cls(img, tlwhs, ids, *, scores=None, frame_id=0, fps=0.0):
+        record["without_cls"] = {
             "scores": scores,
             "frame_id": frame_id,
             "fps": fps,
         }
         return "img"
 
-    out = _plot_tracking_compat(
-        fn,
+    out = call_with_supported_kwargs(
+        fn_with_cls,
         "img",
         [],
         [],
@@ -202,7 +181,25 @@ def test_plot_tracking_compat_without_cls_ids() -> None:
         cls_ids=[3],
     )
     assert out == "img"
-    assert record["kwargs"] == {
+    assert record["with_cls"] == {
+        "scores": [0.1],
+        "frame_id": 1,
+        "fps": 2.0,
+        "cls_ids": [3],
+    }
+
+    out = call_with_supported_kwargs(
+        fn_without_cls,
+        "img",
+        [],
+        [],
+        scores=[0.1],
+        frame_id=1,
+        fps=2.0,
+        cls_ids=[3],
+    )
+    assert out == "img"
+    assert record["without_cls"] == {
         "scores": [0.1],
         "frame_id": 1,
         "fps": 2.0,
