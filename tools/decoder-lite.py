@@ -415,46 +415,37 @@ def main() -> None:
         online_ids: List[int] = []
         online_scores: List[float] = []
         online_cls_ids: List[int] = []
+
         if outputs[0] is not None:
             dets = outputs[0].cpu().numpy()
             dets[:, :4] /= img_info["ratio"]
-            dets_before = dets.shape[0]
-            if dets_before > 0:
-                dets_in = normalize_dets(dets, keep_classes)
-                logger.info(
-                    f"Frame {frame_id}: kept {dets_in.shape[0]}/{dets_before} detections (after class filter and rescale)"
+            dets_in = normalize_dets(dets, keep_classes)
+            if dets_in.shape[0] > 0:
+                online_targets = tracker.update(
+                    dets_in,
+                    [img_info["height"], img_info["width"]],
+                    exp.test_size,
                 )
-                if dets_in.shape[0] > 0:
-                    online_targets = tracker.update(
-                        dets_in,
-                        [img_info["height"], img_info["width"]],
-                        exp.test_size,
-                    )
-                    for t in online_targets:
-                        tlwh = t.tlwh
-                        if tlwh[2] * tlwh[3] > args.min_box_area:
-                            online_tlwhs.append(tlwh)
-                            online_ids.append(t.track_id)
-                            online_scores.append(t.score)
-                            cls_val = getattr(t, "cls", None)
-                            online_cls_ids.append(int(cls_val) if cls_val is not None else -1)
+                for t in online_targets:
+                    tlwh = t.tlwh
+                    if tlwh[2] * tlwh[3] > args.min_box_area:
+                        online_tlwhs.append(tlwh)
+                        online_ids.append(t.track_id)
+                        online_scores.append(t.score)
+                        cls_val = getattr(t, "cls", None)
+                        online_cls_ids.append(
+                            int(cls_val) if cls_val is not None else -1
+                        )
 
-        _dt = None
-        _toc = getattr(timer, "toc", None)
-        if callable(_toc):
-            try:
-                _dt = _toc()
-            except Exception:
-                _dt = None
+        _dt = timer.toc() if hasattr(timer, "toc") else None
         if _dt is None:
             _now = time.perf_counter()
             _dt = _now - _prev_ts
             _prev_ts = _now
-        _fps = fps_meter.update(_dt)
-        fps = float(_fps) if _fps is not None else 0.0
+        fps = float(fps_meter.update(_dt) or 0.0)
 
-        raw_im = img_info["raw_img"]  # BGR frame from source
-        draw_src = raw_im.copy()  # ``plot_tracking`` mutates in-place
+        raw_im = img_info["raw_img"]
+        draw_src = raw_im.copy()
         vis_im = call_with_supported_kwargs(
             plot_tracking,
             draw_src,
@@ -466,22 +457,58 @@ def main() -> None:
             cls_ids=online_cls_ids,
         )
 
+        if args.save_result:
+            if not (
+                len(online_tlwhs)
+                == len(online_ids)
+                == len(online_scores)
+                == len(online_cls_ids)
+            ):
+                logger.warning(
+                    "Lens mismatch: tlwhs=%d ids=%d scores=%d cls=%d",
+                    len(online_tlwhs),
+                    len(online_ids),
+                    len(online_scores),
+                    len(online_cls_ids),
+                )
+            if online_tlwhs:
+                x, y, w, h = online_tlwhs[0]
+                x1, y1, x2, y2 = map(int, (x, y, x + w, y + h))
+                H, W = vis_im.shape[:2]
+                x1 = max(0, min(W - 1, x1))
+                y1 = max(0, min(H - 1, y1))
+                x2 = max(0, min(W - 1, x2))
+                y2 = max(0, min(H - 1, y2))
+                cv2.rectangle(vis_im, (x1, y1), (x2, y2), (0, 255, 0), 3)
+                cv2.putText(
+                    vis_im,
+                    f"DBG id={online_ids[0]}",
+                    (x1, max(0, y1 - 10)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (0, 255, 0),
+                    2,
+                    cv2.LINE_AA,
+                )
+            H, W = vis_im.shape[:2]
+            cv2.circle(vis_im, (W // 2, H // 2), 12, (255, 0, 255), -1)
+
         if not args.no_display:
             cv2.imshow("ByteTrack", vis_im)
             if cv2.waitKey(1) == 27:
                 break
 
-        if args.save_result:
+        if args.save_result and writer is not None:
             frame_to_write = raw_im if getattr(args, "save_raw", False) else vis_im
-            if writer is not None:
-                writer.write(frame_to_write)
-            record = {
-                "frame": int(frame_id),
-                "tlwh": [[float(v) for v in tlwh] for tlwh in online_tlwhs],
-                "id": [int(i) for i in online_ids],
-                "score": [float(s) for s in online_scores],
-            }
-            records.append(record)
+            writer.write(frame_to_write)
+            records.append(
+                {
+                    "frame": int(frame_id),
+                    "tlwh": [[float(v) for v in tlwh] for tlwh in online_tlwhs],
+                    "id": [int(i) for i in online_ids],
+                    "score": [float(s) for s in online_scores],
+                }
+            )
     cap.release()
     if writer:
         writer.release()
