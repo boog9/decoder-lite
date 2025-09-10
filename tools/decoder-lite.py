@@ -272,6 +272,14 @@ def make_parser() -> argparse.ArgumentParser:
                         help="Fuse conv+bn for faster inference (GPU only).")
     parser.add_argument("--no-display", action="store_true",
                         help="Run without OpenCV GUI windows.")
+    parser.add_argument(
+        "--save-raw",
+        action="store_true",
+        help=(
+            "Write raw frames without overlays. By default with --save_result we "
+            "write annotated frames (bbox/ID/score/fps)."
+        ),
+    )
     return parser
 
 
@@ -441,7 +449,7 @@ def main() -> None:
                         _prev_ts = _now
                     _fps = fps_meter.update(_dt)
                     fps = float(_fps) if _fps is not None else 0.0
-                    online_im = call_with_supported_kwargs(
+                    annotated = call_with_supported_kwargs(
                         plot_tracking,
                         img_info["raw_img"],
                         online_tlwhs,
@@ -451,8 +459,9 @@ def main() -> None:
                         fps=fps,
                         cls_ids=online_cls_ids if "online_cls_ids" in locals() else None,
                     )
+                    raw_im = img_info["raw_img"]
                     if args.save_result:
-                        writer.write(online_im)
+                        writer.write(raw_im if args.save_raw else annotated)
                         record = {
                             "frame": int(frame_id),
                             "tlwh": [
@@ -463,7 +472,9 @@ def main() -> None:
                         }
                         records.append(record)
                     if not args.no_display:
-                        cv2.imshow("ByteTrack", online_im)
+                        cv2.imshow(
+                            "ByteTrack", raw_im if args.save_raw else annotated
+                        )
                 else:
                     _dt = None
                     _toc = getattr(timer, "toc", None)
@@ -476,12 +487,24 @@ def main() -> None:
                         _now = time.perf_counter()
                         _dt = _now - _prev_ts
                         _prev_ts = _now
-                    fps_meter.update(_dt)
-                    blank = img_info["raw_img"]
+                    _fps = fps_meter.update(_dt)
+                    fps = float(_fps) if _fps is not None else 0.0
+                    raw_im = img_info["raw_img"]
+                    annotated = call_with_supported_kwargs(
+                        plot_tracking,
+                        raw_im,
+                        [],
+                        [],
+                        scores=[],
+                        frame_id=frame_id,
+                        fps=fps,
+                    )
                     if args.save_result:
-                        writer.write(blank)
+                        writer.write(raw_im if args.save_raw else annotated)
                     if not args.no_display:
-                        cv2.imshow("ByteTrack", blank)
+                        cv2.imshow(
+                            "ByteTrack", raw_im if args.save_raw else annotated
+                        )
             else:
                 _dt = None
                 _toc = getattr(timer, "toc", None)
@@ -494,12 +517,24 @@ def main() -> None:
                     _now = time.perf_counter()
                     _dt = _now - _prev_ts
                     _prev_ts = _now
-                fps_meter.update(_dt)
-                blank = img_info["raw_img"]
+                _fps = fps_meter.update(_dt)
+                fps = float(_fps) if _fps is not None else 0.0
+                raw_im = img_info["raw_img"]
+                annotated = call_with_supported_kwargs(
+                    plot_tracking,
+                    raw_im,
+                    [],
+                    [],
+                    scores=[],
+                    frame_id=frame_id,
+                    fps=fps,
+                )
                 if args.save_result:
-                    writer.write(blank)
+                    writer.write(raw_im if args.save_raw else annotated)
                 if not args.no_display:
-                    cv2.imshow("ByteTrack", blank)
+                    cv2.imshow(
+                        "ByteTrack", raw_im if args.save_raw else annotated
+                    )
         else:
             _dt = None
             _toc = getattr(timer, "toc", None)
@@ -512,12 +547,24 @@ def main() -> None:
                 _now = time.perf_counter()
                 _dt = _now - _prev_ts
                 _prev_ts = _now
-            fps_meter.update(_dt)
-            blank = img_info["raw_img"]
+            _fps = fps_meter.update(_dt)
+            fps = float(_fps) if _fps is not None else 0.0
+            raw_im = img_info["raw_img"]
+            annotated = call_with_supported_kwargs(
+                plot_tracking,
+                raw_im,
+                [],
+                [],
+                scores=[],
+                frame_id=frame_id,
+                fps=fps,
+            )
             if args.save_result:
-                writer.write(blank)
+                writer.write(raw_im if args.save_raw else annotated)
             if not args.no_display:
-                cv2.imshow("ByteTrack", blank)
+                cv2.imshow(
+                    "ByteTrack", raw_im if args.save_raw else annotated
+                )
         if not args.no_display and cv2.waitKey(1) == 27:
             break
     cap.release()

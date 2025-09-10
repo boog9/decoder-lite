@@ -41,6 +41,12 @@ def test_make_parser_fp16_flag() -> None:
     assert args.fp16 is True
 
 
+def test_save_raw_flag() -> None:
+    parser = MODULE.make_parser()
+    args = parser.parse_args(["-f", "exp.py", "-c", "weights.pth", "--save-raw"])
+    assert args.save_raw is True
+
+
 def test_parse_keep() -> None:
     assert parse_keep("0,32") == [0, 32]
     assert parse_keep("32,0,0") == [0, 32]
