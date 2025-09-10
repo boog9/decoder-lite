@@ -56,6 +56,37 @@ except ModuleNotFoundError:  # pragma: no cover
     )
 
 
+class FpsEMA:
+    """Exponential moving average FPS meter."""
+
+    def __init__(self, alpha: float = 0.1) -> None:
+        """Initialize the meter.
+
+        Args:
+            alpha: Smoothing factor in ``(0, 1]``.
+        """
+        self.alpha = alpha
+        self._fps: Optional[float] = None
+
+    def update(self, dt: float) -> float:
+        """Update meter with frame duration.
+
+        Args:
+            dt: Frame processing time in seconds.
+
+        Returns:
+            Smoothed FPS value.
+        """
+        if dt is None or dt <= 0:
+            return self._fps or 0.0
+        inst = 1.0 / dt
+        if self._fps is None:
+            self._fps = inst
+        else:
+            self._fps = (1 - self.alpha) * self._fps + self.alpha * inst
+        return self._fps
+
+
 def parse_keep(arg: str) -> List[int]:
     """Parse comma-separated list of class ids.
 
@@ -310,6 +341,8 @@ def main() -> None:
 
     frame_id = 0
     timer = Timer()
+    fps_meter = FpsEMA(alpha=0.2)
+    _prev_ts = time.perf_counter()
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -348,13 +381,25 @@ def main() -> None:
                             online_tlwhs.append(tlwh)
                             online_ids.append(t.track_id)
                             online_scores.append(t.score)
-                    timer.toc()
+                    _dt = None
+                    _toc = getattr(timer, "toc", None)
+                    if callable(_toc):
+                        try:
+                            _dt = _toc()
+                        except Exception:
+                            _dt = None
+                    if _dt is None:
+                        _now = time.perf_counter()
+                        _dt = _now - _prev_ts
+                        _prev_ts = _now
+                    _fps = fps_meter.update(_dt)
+                    fps = float(_fps) if _fps is not None else 0.0
                     online_im = plot_tracking(
                         img_info["raw_img"],
                         online_tlwhs,
                         online_ids,
                         frame_id=frame_id,
-                        fps=1.0 / timer.average_time,
+                        fps=fps,
                         scores=online_scores,
                         cls_ids=None,
                     )
@@ -373,21 +418,54 @@ def main() -> None:
                     if not args.no_display:
                         cv2.imshow("ByteTrack", online_im)
                 else:
-                    timer.toc()
+                    _dt = None
+                    _toc = getattr(timer, "toc", None)
+                    if callable(_toc):
+                        try:
+                            _dt = _toc()
+                        except Exception:
+                            _dt = None
+                    if _dt is None:
+                        _now = time.perf_counter()
+                        _dt = _now - _prev_ts
+                        _prev_ts = _now
+                    fps_meter.update(_dt)
                     blank = img_info["raw_img"]
                     if args.save_result:
                         writer.write(blank)
                     if not args.no_display:
                         cv2.imshow("ByteTrack", blank)
             else:
-                timer.toc()
+                _dt = None
+                _toc = getattr(timer, "toc", None)
+                if callable(_toc):
+                    try:
+                        _dt = _toc()
+                    except Exception:
+                        _dt = None
+                if _dt is None:
+                    _now = time.perf_counter()
+                    _dt = _now - _prev_ts
+                    _prev_ts = _now
+                fps_meter.update(_dt)
                 blank = img_info["raw_img"]
                 if args.save_result:
                     writer.write(blank)
                 if not args.no_display:
                     cv2.imshow("ByteTrack", blank)
         else:
-            timer.toc()
+            _dt = None
+            _toc = getattr(timer, "toc", None)
+            if callable(_toc):
+                try:
+                    _dt = _toc()
+                except Exception:
+                    _dt = None
+            if _dt is None:
+                _now = time.perf_counter()
+                _dt = _now - _prev_ts
+                _prev_ts = _now
+            fps_meter.update(_dt)
             blank = img_info["raw_img"]
             if args.save_result:
                 writer.write(blank)
