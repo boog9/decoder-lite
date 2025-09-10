@@ -216,7 +216,7 @@ def normalize_dets(
     """
 
     if dets.size == 0:
-        empty = np.empty((0, 5), dtype=np.float32)
+        empty = np.zeros((0, 5), dtype=np.float32)
         return empty, None
 
     cols = dets.shape[1]
@@ -480,14 +480,14 @@ def main() -> None:
         )
         num_raw = out_np.shape[0]
         if num_raw:
-            boxes_xyxy = (out_np[:, :4] / ratio).astype(np.float32, copy=False)
-            boxes_xyxy[:, 0::2] = np.clip(boxes_xyxy[:, 0::2], 0, w - 1)
-            boxes_xyxy[:, 1::2] = np.clip(boxes_xyxy[:, 1::2], 0, h - 1)
+            bboxes_xyxy = out_np[:, :4].astype(np.float32, copy=False)
+            bboxes_xyxy /= ratio
+            bboxes_xyxy[:, 0::2] = np.clip(bboxes_xyxy[:, 0::2], 0, w - 1)
+            bboxes_xyxy[:, 1::2] = np.clip(bboxes_xyxy[:, 1::2], 0, h - 1)
         else:
-            boxes_xyxy = np.empty((0, 4), dtype=np.float32)
-        # if logger.level("DEBUG"):  # якщо використовуєте loguru
-        assert (boxes_xyxy[:, 0] <= boxes_xyxy[:, 2]).all() if boxes_xyxy.size else True
-        assert (boxes_xyxy[:, 1] <= boxes_xyxy[:, 3]).all() if boxes_xyxy.size else True
+            bboxes_xyxy = np.zeros((0, 4), dtype=np.float32)
+        assert (bboxes_xyxy[:, 0] <= bboxes_xyxy[:, 2]).all() if bboxes_xyxy.size else True
+        assert (bboxes_xyxy[:, 1] <= bboxes_xyxy[:, 3]).all() if bboxes_xyxy.size else True
 
         if num_raw:
             if out_np.shape[1] >= 7:
@@ -509,24 +509,24 @@ def main() -> None:
                 f"Sample BEFORE descaling (xyxy) head: {out_np[:sample, :4].round(2).tolist()}"
             )
             logger.info(
-                f"Sample AFTER  descaling (xyxy) head: {boxes_xyxy[:sample].round(2).tolist()}"
+                f"Sample AFTER  descaling (xyxy) head: {bboxes_xyxy[:sample].round(2).tolist()}"
             )
 
         if keep_classes is not None and cls_ids.size:
             mask = np.isin(cls_ids, keep_classes)
-            boxes_xyxy = boxes_xyxy[mask]
+            bboxes_xyxy = bboxes_xyxy[mask]
             scores = scores[mask]
             cls_ids = cls_ids[mask]
 
-        if boxes_xyxy.size == 0:
-            dets_for_tracker = np.empty((0, 5), dtype=np.float32)
+        if bboxes_xyxy.size == 0:
+            dets_for_tracker = np.zeros((0, 5), dtype=np.float32)
         else:
-            dets_for_tracker = np.hstack([boxes_xyxy, scores[:, None]]).astype(
+            dets_for_tracker = np.hstack([bboxes_xyxy, scores[:, None]]).astype(
                 np.float32, copy=False
             )
         dets_c = np.ascontiguousarray(dets_for_tracker)
         logger.info(
-            f"Frame {frame_id}: dets raw={num_raw} kept={len(boxes_xyxy)} ratio={ratio:.6f}"
+            f"Frame {frame_id}: dets raw={num_raw} kept={len(bboxes_xyxy)} ratio={ratio:.6f}"
         )
         try:
             online_targets = tracker.update(dets_c, (h, w))
@@ -534,13 +534,13 @@ def main() -> None:
             in_h, in_w = map(int, getattr(exp, "test_size", (h, w)))
             online_targets = tracker.update(dets_c, (h, w), (in_h, in_w))
         for t in online_targets:
-            tlwh = t.tlwh
+            tlwh = np.asarray(t.tlwh, dtype=np.float32)
             if tlwh[2] * tlwh[3] <= 0:
                 continue
-            online_tlwhs.append(tlwh)
-            online_ids.append(t.track_id)
-            online_scores.append(t.score)
-            online_cls_ids.append(getattr(t, "cls", -1))
+            online_tlwhs.append(tlwh.tolist())
+            online_ids.append(int(t.track_id))
+            online_scores.append(float(t.score))
+            online_cls_ids.append(int(getattr(t, "cls", -1)))
         if len(online_tlwhs) == 0 and dets_for_tracker.size > 0:
             logger.debug(
                 f"No tracks after filter; dets present. Check min_box_area={args.min_box_area} / tracker thresholds."
@@ -553,10 +553,10 @@ def main() -> None:
             _prev_ts = _now
         fps = float(fps_meter.update(_dt) or 0.0)
 
-        frame_for_draw = raw_im.copy()
+        raw_copy = np.ascontiguousarray(np.copy(raw_im))
         annotated = call_with_supported_kwargs(
             plot_tracking,
-            frame_for_draw,
+            raw_copy,
             online_tlwhs,
             online_ids,
             scores=online_scores,

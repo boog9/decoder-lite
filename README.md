@@ -89,8 +89,10 @@ The Makefile adds `--no-display` for headless execution. Remove the flag to view
 Frames are annotated every frame via `plot_tracking`. When `--no-display` is
 used the window is skipped, yet the video buffer still contains bounding boxes
 and IDs. With `--save_result` the annotated frames are written to
-`outputs/videos/result.mp4`. Pass `--save-raw` to store unmodified frames
-instead. JSON logs are written to `outputs/logs/result.json`.
+`outputs/videos/result.mp4`. Bounding boxes are descaled once into raw pixel
+coordinates and drawn on a copy of the original frame, ensuring `--save-raw`
+outputs remain pristine. Pass `--save-raw` to store unmodified frames instead.
+JSON logs are written to `outputs/logs/result.json`.
 
 Use the `--keep-classes` flag to restrict tracking to specific COCO class IDs
 (``--keep-classes 0,32`` for persons and sports balls). Passing no value or an
