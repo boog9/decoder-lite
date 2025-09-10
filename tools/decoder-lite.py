@@ -43,6 +43,11 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover
     torch = None  # allow running without torch in serialization
 
+try:  # pragma: no cover - optional dependency
+    from yolox.data.data_augment import preproc as yolox_preproc
+except Exception:  # pragma: no cover
+    yolox_preproc = None  # type: ignore
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("decoder-lite")
@@ -152,31 +157,6 @@ def parse_keep_classes(s: str | None) -> list[int] | None:
     return [int(x) for x in s.split(",") if x.strip() != ""]
 
 
-def _preproc_topleft(
-    img: np.ndarray, input_size: tuple[int, int]
-) -> tuple[np.ndarray, float, tuple[int, int]]:
-    """Resize and pad image using top-left letterbox as in ByteTrack demo.
-
-    Args:
-        img: Input BGR image.
-        input_size: Desired ``(input_h, input_w)`` size.
-
-    Returns:
-        Tuple containing the preprocessed image, resize ratio and padding
-        offsets ``(dw, dh)``.
-    """
-
-    import cv2  # pragma: no cover
-
-    h0, w0 = img.shape[:2]
-    in_h, in_w = int(input_size[0]), int(input_size[1])
-    r = min(in_h / h0, in_w / w0)
-    new_w, new_h = int(round(w0 * r)), int(round(h0 * r))
-    resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-    canvas = np.full((in_h, in_w, 3), 114, dtype=np.uint8)
-    canvas[0:new_h, 0:new_w] = resized
-    dw, dh = 0, 0
-    return canvas, r, (dw, dh)
 
 
 def filter_by_classes(dets: np.ndarray, keep: Iterable[int]) -> np.ndarray:
@@ -363,7 +343,6 @@ def main() -> None:
     # Heavy imports are done lazily to keep unit tests lightweight.
     from yolox.exp import get_exp
     from yolox.utils import fuse_model, get_model_info, postprocess
-    from yolox.data.data_augment import preproc
     from yolox.utils.visualize import plot_tracking
     try:
         # Старі гілки YOLOX мали Timer у yolox.utils; якщо є — використовуємо.
@@ -413,7 +392,6 @@ def main() -> None:
         model=model,
         exp=exp,
         postprocess_fn=postprocess,
-        preproc_fn=None,
         device=args.device,
         fp16=False,
     )
@@ -491,27 +469,20 @@ def main() -> None:
         raw_im = img_info["raw_img"]
         h, w = raw_im.shape[:2]
         ratio = float(img_info["ratio"])
-        dw, dh = (0, 0)
-        if "pad" in img_info and isinstance(img_info["pad"], (tuple, list)):
-            dw, dh = int(img_info["pad"][0]), int(img_info["pad"][1])
-        in_h, in_w = img_info.get("input_size", (None, None))
-
-        if outputs[0] is None:
-            out_np = np.empty((0, 7), dtype=np.float32)
-        else:
-            out_np = outputs[0].cpu().numpy()
+        out_np = (
+            outputs[0].cpu().numpy()
+            if outputs[0] is not None
+            else np.zeros((0, 7), np.float32)
+        )
         num_raw = out_np.shape[0]
-
-        if out_np.size == 0:
-            boxes_xyxy = np.empty((0, 4), dtype=np.float32)
-            scores = np.empty((0,), dtype=np.float32)
-            cls_ids = np.empty((0,), dtype=np.int32)
-        else:
-            boxes_xyxy = out_np[:, 0:4] - np.array([dw, dh, dw, dh], dtype=np.float32)
-            boxes_xyxy = (boxes_xyxy / ratio).astype(np.float32)
+        if num_raw:
+            boxes_xyxy = out_np[:, :4] / ratio
             boxes_xyxy[:, 0::2] = np.clip(boxes_xyxy[:, 0::2], 0, w - 1)
             boxes_xyxy[:, 1::2] = np.clip(boxes_xyxy[:, 1::2], 0, h - 1)
+        else:
+            boxes_xyxy = np.empty((0, 4), dtype=np.float32)
 
+        if num_raw:
             if out_np.shape[1] >= 7:
                 scores = (out_np[:, 4] * out_np[:, 5]).astype(np.float32)
                 cls_ids = out_np[:, 6].astype(np.int32)
@@ -520,57 +491,42 @@ def main() -> None:
                 cls_ids = out_np[:, 5].astype(np.int32)
             else:
                 scores = out_np[:, 4].astype(np.float32)
-                cls_ids = np.empty((0,), dtype=np.int32)
+                cls_ids = np.full((num_raw,), -1, np.int32)
+        else:
+            scores = np.empty((0,), dtype=np.float32)
+            cls_ids = np.empty((0,), dtype=np.int32)
 
-        if keep_classes is not None and cls_ids.size:
-            m = np.isin(cls_ids, keep_classes)
-            boxes_xyxy = boxes_xyxy[m]
-            scores = scores[m]
-            cls_ids = cls_ids[m]
-
-        num_kept = boxes_xyxy.shape[0]
-        logger.info(
-            "Frame %d: dets raw=%d kept=%d ratio=%.6f pad=(%d,%d) input_size=%s",
-            frame_id,
-            num_raw,
-            num_kept,
-            ratio,
-            dw,
-            dh,
-            img_info.get("input_size"),
-        )
-        if frame_id == 1 and num_raw:
+        if frame_id == 1:
             sample = min(3, num_raw)
             logger.info(
-                "Sample bboxes BEFORE descaling (xyxy): %s",
-                out_np[:sample, 0:4].round(2).tolist(),
+                "Sample BEFORE descaling (xyxy) head: %s",
+                out_np[:sample, :4].round(2).tolist(),
             )
             logger.info(
-                "Sample bboxes AFTER deletterbox+descale (xyxy): %s",
+                "Sample AFTER  descaling (xyxy) head: %s",
                 boxes_xyxy[:sample].round(2).tolist(),
             )
 
-        if boxes_xyxy.size == 0:
-            dets_for_tracker = np.empty((0, 5), dtype=np.float32)
-        else:
-            dets_for_tracker = np.hstack([boxes_xyxy, scores[:, None]]).astype(
-                np.float32
-            )
-            assert (boxes_xyxy[:, 0] <= boxes_xyxy[:, 2]).all()
-            assert (boxes_xyxy[:, 1] <= boxes_xyxy[:, 3]).all()
-        if dets_for_tracker.size == 0 or dets_for_tracker.shape[1] != 5:
-            dets_for_tracker = np.empty((0, 5), dtype=np.float32)
+        if keep_classes is not None and cls_ids.size:
+            mask = np.isin(cls_ids, keep_classes)
+            boxes_xyxy = boxes_xyxy[mask]
+            scores = scores[mask]
+            cls_ids = cls_ids[mask]
 
-        try:
-            online_targets = tracker.update(
-                np.ascontiguousarray(dets_for_tracker), (h, w)
-            )
-        except TypeError:
-            in_h = img_info.get("input_size", (None, None))[0]
-            in_w = img_info.get("input_size", (None, None))[1]
-            online_targets = tracker.update(
-                np.ascontiguousarray(dets_for_tracker), (h, w), (in_h, in_w)
-            )
+        dets_for_tracker = (
+            np.hstack([boxes_xyxy, scores[:, None]]).astype(np.float32, copy=False)
+            if boxes_xyxy.size
+            else np.empty((0, 5), dtype=np.float32)
+        )
+        dets_for_tracker = np.ascontiguousarray(dets_for_tracker)
+        logger.info(
+            "Frame %d: dets raw=%d kept=%d ratio=%.6f",
+            frame_id,
+            num_raw,
+            boxes_xyxy.shape[0],
+            ratio,
+        )
+        online_targets = tracker.update(dets_for_tracker, (h, w))
         for t in online_targets:
             tlwh = t.tlwh
             if tlwh[2] * tlwh[3] <= 0:
@@ -655,14 +611,14 @@ class Predictor:
         model,
         exp,
         postprocess_fn,
-        preproc_fn,
+        preproc_fn: Any | None = None,
         device: str = "cpu",
         fp16: bool = False,
     ) -> None:
         self.model = model
         self.exp = exp
         self.postprocess = postprocess_fn
-        self.preproc = preproc_fn or _preproc_topleft
+        self.preproc = preproc_fn  # kept for API compatibility, unused
         self.device = device
 
         # Use experiment-provided normalization values if available; otherwise fall back
@@ -708,35 +664,21 @@ class Predictor:
             "height": int(img.shape[0]),
             "width": int(img.shape[1]),
         }
-        in_h, in_w = map(int, getattr(self.exp, "test_size", (640, 640)))
+        in_h, in_w = map(int, self.test_size)
         assert isinstance(in_h, int) and isinstance(in_w, int), "test_size must be ints (H,W)"
-        input_size = (in_h, in_w)
-        proc_res = self.preproc(img, input_size)
-        if not isinstance(proc_res, tuple) or len(proc_res) not in {2, 3}:
-            raise ValueError("preproc_fn must return (img, ratio[, pad])")
-        if len(proc_res) == 3:
-            proc_img, ratio, pad = proc_res
-            dw, dh = pad
-        else:
-            proc_img, ratio = proc_res
-            dw, dh = (0, 0)
-        assert 0.05 < ratio < 50.0, f"ratio suspicious: {ratio}"
+        if yolox_preproc is not None:
+            proc_img, ratio = yolox_preproc(img, (in_h, in_w), self.mean, self.std)
+        elif self.preproc is not None:
+            proc_img, ratio = self.preproc(img, (in_h, in_w))
+        else:  # pragma: no cover
+            raise ModuleNotFoundError("yolox_preproc is unavailable")
         img_info.update(
             {
                 "ratio": float(ratio),
-                "pad": (int(dw), int(dh)),
                 "input_size": (int(in_h), int(in_w)),
                 "raw_shape": (int(img.shape[0]), int(img.shape[1])),
             }
         )
-
-        import cv2  # pragma: no cover
-        proc_img = cv2.cvtColor(proc_img, cv2.COLOR_BGR2RGB)
-        proc_img = proc_img.astype(np.float32) / 255.0
-        proc_img = (proc_img - np.array(self.mean, dtype=np.float32)) / np.array(
-            self.std, dtype=np.float32
-        )
-        proc_img = proc_img.transpose(2, 0, 1)
         img_tensor = torch.from_numpy(proc_img).unsqueeze(0)
         if self.device == "gpu":
             img_tensor = img_tensor.cuda()
