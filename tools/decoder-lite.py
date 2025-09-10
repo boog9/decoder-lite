@@ -43,6 +43,8 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover
     torch = None  # allow running without torch in serialization
 
+# Attempt to import the canonical YOLOX preproc used by ByteTrack. The import is
+# optional so that unit tests can run without the full dependency tree.
 try:  # pragma: no cover - optional dependency
     from yolox.data.data_augment import preproc as yolox_preproc
 except Exception:  # pragma: no cover
@@ -238,8 +240,7 @@ def normalize_dets(
             kept = np.isin(cls, list(keep_classes))
             if not np.any(kept):
                 logger.warning(
-                    "Class filter kept 0/ %d dets; disabling filter for this frame.",
-                    len(cls),
+                    f"Class filter kept 0/{len(cls)} dets; disabling filter for this frame."
                 )
                 kept = np.ones(len(cls), dtype=bool)
         xyxy, score, cls = xyxy[kept], score[kept], cls[kept]
@@ -258,8 +259,7 @@ def normalize_dets(
             kept = np.isin(cls, list(keep_classes))
             if not np.any(kept):
                 logger.warning(
-                    "Class filter kept 0/ %d dets; disabling filter for this frame.",
-                    len(cls),
+                    f"Class filter kept 0/{len(cls)} dets; disabling filter for this frame."
                 )
                 kept = np.ones(len(cls), dtype=bool)
         xyxy, score, cls = xyxy[kept], score[kept], cls[kept]
@@ -338,7 +338,9 @@ def main() -> None:
     """Entry point for the demo."""
     args = make_parser().parse_args()
     keep_classes = parse_keep_classes(args.keep_classes)
-    logger.info("Keeping classes: %s", "ALL" if keep_classes is None else keep_classes)
+    logger.info(
+        f"Keeping classes: {'ALL' if keep_classes is None else keep_classes}"
+    )
 
     # Heavy imports are done lazily to keep unit tests lightweight.
     from yolox.exp import get_exp
@@ -395,7 +397,9 @@ def main() -> None:
         device=args.device,
         fp16=False,
     )
-    logger.info("exp.test_size treated as (H,W)=%s", getattr(exp, "test_size", None))
+    logger.info(
+        f"exp.test_size treated as (H,W)={getattr(exp, 'test_size', None)}"
+    )
     # fps / frame_rate may already be derived from video or args
     frame_rate = getattr(args, "fps", None)
     if frame_rate is None or frame_rate <= 0:
@@ -471,16 +475,19 @@ def main() -> None:
         ratio = float(img_info["ratio"])
         out_np = (
             outputs[0].cpu().numpy()
-            if outputs[0] is not None
-            else np.zeros((0, 7), np.float32)
+            if (outputs and outputs[0] is not None)
+            else np.zeros((0, 7), dtype=np.float32)
         )
         num_raw = out_np.shape[0]
         if num_raw:
-            boxes_xyxy = out_np[:, :4] / ratio
+            boxes_xyxy = (out_np[:, :4] / ratio).astype(np.float32, copy=False)
             boxes_xyxy[:, 0::2] = np.clip(boxes_xyxy[:, 0::2], 0, w - 1)
             boxes_xyxy[:, 1::2] = np.clip(boxes_xyxy[:, 1::2], 0, h - 1)
         else:
             boxes_xyxy = np.empty((0, 4), dtype=np.float32)
+        # if logger.level("DEBUG"):  # якщо використовуєте loguru
+        assert (boxes_xyxy[:, 0] <= boxes_xyxy[:, 2]).all() if boxes_xyxy.size else True
+        assert (boxes_xyxy[:, 1] <= boxes_xyxy[:, 3]).all() if boxes_xyxy.size else True
 
         if num_raw:
             if out_np.shape[1] >= 7:
@@ -499,12 +506,10 @@ def main() -> None:
         if frame_id == 1:
             sample = min(3, num_raw)
             logger.info(
-                "Sample BEFORE descaling (xyxy) head: %s",
-                out_np[:sample, :4].round(2).tolist(),
+                f"Sample BEFORE descaling (xyxy) head: {out_np[:sample, :4].round(2).tolist()}"
             )
             logger.info(
-                "Sample AFTER  descaling (xyxy) head: %s",
-                boxes_xyxy[:sample].round(2).tolist(),
+                f"Sample AFTER  descaling (xyxy) head: {boxes_xyxy[:sample].round(2).tolist()}"
             )
 
         if keep_classes is not None and cls_ids.size:
@@ -513,20 +518,21 @@ def main() -> None:
             scores = scores[mask]
             cls_ids = cls_ids[mask]
 
-        dets_for_tracker = (
-            np.hstack([boxes_xyxy, scores[:, None]]).astype(np.float32, copy=False)
-            if boxes_xyxy.size
-            else np.empty((0, 5), dtype=np.float32)
-        )
-        dets_for_tracker = np.ascontiguousarray(dets_for_tracker)
+        if boxes_xyxy.size == 0:
+            dets_for_tracker = np.empty((0, 5), dtype=np.float32)
+        else:
+            dets_for_tracker = np.hstack([boxes_xyxy, scores[:, None]]).astype(
+                np.float32, copy=False
+            )
+        dets_c = np.ascontiguousarray(dets_for_tracker)
         logger.info(
-            "Frame %d: dets raw=%d kept=%d ratio=%.6f",
-            frame_id,
-            num_raw,
-            boxes_xyxy.shape[0],
-            ratio,
+            f"Frame {frame_id}: dets raw={num_raw} kept={len(boxes_xyxy)} ratio={ratio:.6f}"
         )
-        online_targets = tracker.update(dets_for_tracker, (h, w))
+        try:
+            online_targets = tracker.update(dets_c, (h, w))
+        except TypeError:
+            in_h, in_w = map(int, getattr(exp, "test_size", (h, w)))
+            online_targets = tracker.update(dets_c, (h, w), (in_h, in_w))
         for t in online_targets:
             tlwh = t.tlwh
             if tlwh[2] * tlwh[3] <= 0:
@@ -537,8 +543,7 @@ def main() -> None:
             online_cls_ids.append(getattr(t, "cls", -1))
         if len(online_tlwhs) == 0 and dets_for_tracker.size > 0:
             logger.debug(
-                "No tracks after filter; dets present. Check min_box_area=%s / tracker thresholds.",
-                args.min_box_area,
+                f"No tracks after filter; dets present. Check min_box_area={args.min_box_area} / tracker thresholds."
             )
 
         _dt = timer.toc() if hasattr(timer, "toc") else None
@@ -569,11 +574,8 @@ def main() -> None:
             == len(online_cls_ids)
         ):
             logger.warning(
-                "Lens mismatch: tlwhs=%d ids=%d scores=%d cls=%d",
-                len(online_tlwhs),
-                len(online_ids),
-                len(online_scores),
-                len(online_cls_ids),
+                f"Lens mismatch: tlwhs={len(online_tlwhs)} ids={len(online_ids)} "
+                f"scores={len(online_scores)} cls={len(online_cls_ids)}"
             )
 
         if not args.no_display:
@@ -618,7 +620,7 @@ class Predictor:
         self.model = model
         self.exp = exp
         self.postprocess = postprocess_fn
-        self.preproc = preproc_fn  # kept for API compatibility, unused
+        self.preproc = preproc_fn or yolox_preproc
         self.device = device
 
         # Use experiment-provided normalization values if available; otherwise fall back
@@ -659,24 +661,17 @@ class Predictor:
 
         import torch
 
-        img_info: dict = {
-            "raw_img": img,
-            "height": int(img.shape[0]),
-            "width": int(img.shape[1]),
-        }
-        in_h, in_w = map(int, self.test_size)
-        assert isinstance(in_h, int) and isinstance(in_w, int), "test_size must be ints (H,W)"
-        if yolox_preproc is not None:
-            proc_img, ratio = yolox_preproc(img, (in_h, in_w), self.mean, self.std)
-        elif self.preproc is not None:
-            proc_img, ratio = self.preproc(img, (in_h, in_w))
-        else:  # pragma: no cover
+        img_info: dict = {"raw_img": img}
+        in_h, in_w = map(int, getattr(self.exp, "test_size", (640, 640)))
+        if self.preproc is None:  # pragma: no cover - safety
             raise ModuleNotFoundError("yolox_preproc is unavailable")
+        proc_img, ratio = self.preproc(img, (in_h, in_w), self.mean, self.std)
         img_info.update(
             {
                 "ratio": float(ratio),
+                "height": int(img.shape[0]),
+                "width": int(img.shape[1]),
                 "input_size": (int(in_h), int(in_w)),
-                "raw_shape": (int(img.shape[0]), int(img.shape[1])),
             }
         )
         img_tensor = torch.from_numpy(proc_img).unsqueeze(0)
