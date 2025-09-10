@@ -269,6 +269,74 @@ def normalize_dets(
     raise ValueError(f"Unexpected dets shape {dets.shape}; expected (N,5|6|7).")
 
 
+def clip_track_bbox(
+    track: Any,
+    image_size: tuple[float, float],
+    frame_id: int,
+    logger: logging.Logger,
+) -> Optional[list[float]]:
+    """Convert a track's box to TLWH and clip to image bounds.
+
+    Args:
+        track: ByteTrack track object.
+        image_size: Tuple of ``(height, width)`` in pixels.
+        frame_id: Current frame index for diagnostic logging.
+        logger: Logger instance for debug output.
+
+    Returns:
+        ``[x, y, w, h]`` list or ``None`` if the bbox is invalid after clipping.
+    """
+
+    h, w = map(float, image_size)
+
+    if hasattr(track, "tlbr"):
+        x1, y1, x2, y2 = map(float, track.tlbr)
+    elif hasattr(track, "tlwh"):
+        x1, y1, w_, h_ = map(float, track.tlwh)
+        x2 = x1 + w_
+        y2 = y1 + h_
+    else:
+        return None
+
+    if frame_id <= 3:
+        logger.info(
+            f"  Track ID {getattr(track, 'track_id', '?')}: Raw coords from tracker: "
+            f"x1={x1:.1f}, y1={y1:.1f}, x2={x2:.1f}, y2={y2:.1f}"
+        )
+        logger.info(f"  Image dimensions: {w:.0f}x{h:.0f}")
+
+    if x2 <= x1 or y2 <= y1:
+        if frame_id <= 3:
+            logger.warning(
+                f"  Invalid bbox from tracker: w={x2 - x1:.1f}, h={y2 - y1:.1f}"
+            )
+        return None
+
+    x1 = max(0.0, x1)
+    y1 = max(0.0, y1)
+    x2 = min(w, x2)
+    y2 = min(h, y2)
+
+    w_box = x2 - x1
+    h_box = y2 - y1
+    if w_box <= 0 or h_box <= 0:
+        if frame_id <= 3:
+            logger.warning(
+                f"  Bbox eliminated after clipping: w={w_box:.1f}, h={h_box:.1f}"
+            )
+        return None
+
+    tlwh = [x1, y1, w_box, h_box]
+    if frame_id <= 3:
+        logger.info(
+            f"  Track ID {getattr(track, 'track_id', '?')}: Final tlwh: {tlwh}"
+        )
+        logger.info(
+            f"  Position as percentage: x={x1 / w * 100:.1f}%, y={y1 / h * 100:.1f}%"
+        )
+    return tlwh
+
+
 def make_parser() -> argparse.ArgumentParser:
     """Create the CLI argument parser."""
     parser = argparse.ArgumentParser("decoder-lite ByteTrack demo")
@@ -364,6 +432,17 @@ def main() -> None:
     from yolox.tracker.byte_tracker import BYTETracker
     import cv2
     import torch
+
+    try:  # pragma: no cover - diagnostic only
+        import yolox as yolox_pkg
+        logger.info(
+            f"YOLOX version info: {getattr(yolox_pkg, '__version__', 'unknown')}"
+        )
+    except Exception:  # pragma: no cover
+        pass
+    logger.info(
+        f"ByteTracker.update signature: {inspect.signature(BYTETracker.update)}"
+    )
 
     exp = get_exp(args.exp_file, None)
     if args.tsize is not None:
@@ -555,6 +634,15 @@ def main() -> None:
         logger.info(
             f"Frame {frame_id}: dets raw={num_raw} kept={len(bboxes_xyxy)} ratio={ratio:.6f}"
         )
+        if frame_id <= 3 and dets_c.size > 0:
+            logger.info(
+                f"Frame {frame_id}: Sending to tracker - shape: {dets_c.shape}"
+            )
+            logger.info(
+                "  Sample detection (xyxy+score): %s",
+                dets_c[0].tolist() if len(dets_c) else None,
+            )
+            logger.info(f"  Image size sent to tracker: ({h}, {w})")
         try:
             online_targets = tracker.update(dets_c, (h, w))
         except TypeError:
@@ -565,57 +653,9 @@ def main() -> None:
         )
 
         for t in online_targets:
-            # ByteTrack may expose tlbr or tlwh; convert accordingly
-            if hasattr(t, "tlbr"):
-                x1, y1, x2, y2 = map(float, t.tlbr)
-            else:
-                x1, y1, w_, h_ = map(float, t.tlwh)
-                x2 = x1 + w_
-                y2 = y1 + h_
-
-            # Diagnostic logging for the first few frames
-            if frame_id <= 3:
-                logger.info(
-                    f"  Track ID {getattr(t, 'track_id', '?')}: Raw coords: x1={x1:.1f}, "
-                    f"y1={y1:.1f}, x2={x2:.1f}, y2={y2:.1f}"
-                )
-                logger.info(
-                    f"  Image dimensions: {w}x{h}, ratio used for detections: {ratio:.6f}"
-                )
-
-            # Validate bbox dimensions
-            if x2 <= x1 or y2 <= y1:
-                if frame_id <= 3:
-                    logger.warning(
-                        f"  Invalid bbox dimensions: w={x2 - x1:.1f}, h={y2 - y1:.1f}"
-                    )
+            tlwh = clip_track_bbox(t, (h, w), frame_id, logger)
+            if tlwh is None:
                 continue
-
-            # Clip to image bounds
-            x1 = max(0.0, x1)
-            y1 = max(0.0, y1)
-            x2 = min(float(w), x2)
-            y2 = min(float(h), y2)
-
-            w_box = x2 - x1
-            h_box = y2 - y1
-
-            if w_box <= 0 or h_box <= 0:
-                if frame_id <= 3:
-                    logger.warning(
-                        f"  Bbox eliminated after clipping: w={w_box:.1f}, h={h_box:.1f}"
-                    )
-                continue
-
-            tlwh = [x1, y1, w_box, h_box]
-
-            if frame_id <= 3:
-                logger.info(
-                    f"  Final tlwh: [{x1:.1f}, {y1:.1f}, {w_box:.1f}, {h_box:.1f}]"
-                )
-                logger.info(
-                    f"  Position as percentage: x={x1 / w * 100:.1f}%, y={y1 / h * 100:.1f}%"
-                )
 
             tlwhs.append(tlwh)
             online_ids.append(int(t.track_id))
