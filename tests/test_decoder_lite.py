@@ -66,6 +66,14 @@ def test_filter_by_classes() -> None:
     assert set(filtered[:, 5].astype(int)) == {0, 32}
 
 
+@pytest.mark.skipif(np is None, reason="numpy not available")
+def test_filter_by_classes_empty() -> None:
+    dets = np.empty((0, 6), dtype=np.float32)
+    keep = {0}
+    out = filter_by_classes(dets, keep)
+    assert out.shape == (0, 5)
+
+
 def test_fps_ema() -> None:
     meter = FpsEMA(alpha=0.5)
     assert meter.update(0.2) == 5.0
