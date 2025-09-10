@@ -63,3 +63,16 @@ def test_bytetrack_shapes(cols: int) -> None:
     assert tracker.calls == 1
     assert tracker.last_shape is not None
     assert tracker.last_shape[1] == 5
+
+
+@pytest.mark.skipif(np is None, reason="numpy not available")
+@pytest.mark.parametrize("cols", [6, 5, 7])
+def test_bytetrack_empty_shapes(cols: int) -> None:
+    dets = np.empty((0, cols), dtype=float)
+    img_info = {"ratio": 1.0, "height": 100, "width": 100}
+    dets[:, :4] /= img_info["ratio"]
+    dets_in, _ = normalize_dets(dets, {0, 32})
+    tracker = DummyTracker()
+    tracker.update(dets_in, [img_info["height"], img_info["width"]], (640, 640))
+    assert tracker.calls == 1
+    assert tracker.last_shape == (0, 5)

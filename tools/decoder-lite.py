@@ -202,7 +202,8 @@ def normalize_dets(
     """
 
     if dets.size == 0:
-        return dets, None
+        empty = np.empty((0, 5), dtype=np.float32)
+        return empty, None
 
     cols = dets.shape[1]
 

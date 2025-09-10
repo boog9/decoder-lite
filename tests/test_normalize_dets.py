@@ -95,3 +95,13 @@ def test_soft_filter_warns(caplog: pytest.LogCaptureFixture) -> None:
     assert cls is not None and cls.tolist() == [1, 1]
     msgs = [rec.message for rec in caplog.records if "Class filter kept 0/" in rec.message]
     assert len(msgs) == 1
+
+
+@pytest.mark.parametrize("cols", [5, 6, 7])
+def test_empty_inputs_return_canonical_shape(cols: int) -> None:
+    mod = _load_decoder_tool()
+    dets = np.empty((0, cols), dtype=np.float32)
+    out, cls = mod.normalize_dets(dets, keep_classes={0})
+    assert out.shape == (0, 5)
+    assert out.dtype == np.float32
+    assert cls is None
