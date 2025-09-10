@@ -33,7 +33,7 @@ import time
 import inspect
 from types import SimpleNamespace
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Set
+from typing import Any, Iterable, Optional, Set
 
 import logging
 import numpy as np
@@ -131,20 +131,25 @@ class FpsEMA:
         return self._fps
 
 
-def parse_keep(arg: str) -> List[int]:
-    """Parse comma-separated list of class ids.
+def parse_keep_classes(s: str | None) -> list[int] | None:
+    """Parse a comma-separated string of class IDs.
+
+    ``None`` or an empty string disables filtering and returns ``None``.
 
     Args:
-        arg: Comma-separated class id string.
+        s: Comma-separated class ID string or ``None``.
 
     Returns:
-        Sorted list of unique integers.
+        ``None`` if filtering should be disabled, otherwise a list of integers.
     """
-    cleaned = arg.replace(" ", "")
-    if not cleaned:
-        return []
-    vals = {int(x) for x in cleaned.split(",") if x}
-    return sorted(vals)
+
+    if s is None:
+        return None
+    cleaned = s.strip()
+    if cleaned == "":
+        # Critical: empty string means no filtering at all.
+        return None
+    return [int(x) for x in cleaned.split(",") if x.strip() != ""]
 
 
 def filter_by_classes(dets: np.ndarray, keep: Iterable[int]) -> np.ndarray:
@@ -173,7 +178,7 @@ def filter_by_classes(dets: np.ndarray, keep: Iterable[int]) -> np.ndarray:
 
 def normalize_dets(
     dets: np.ndarray,
-    keep_classes: set[int] | None = None,
+    keep_classes: Iterable[int] | None = None,
 ) -> tuple[np.ndarray, np.ndarray | None]:
     """Normalize raw detector outputs and optionally filter by class.
 
@@ -300,10 +305,11 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--keep-classes",
         type=str,
-        default="0,32",
+        default=None,
         help=(
-            "COCO class ids to keep, comma-separated. 5-col inputs lack a class "
-            "column, so this flag is ignored with a warning."
+            "Comma-separated COCO class ids. None/empty => no filtering. "
+            "5-col inputs lack a class column, so this flag is ignored with a "
+            "warning."
         ),
     )
     parser.add_argument("--fuse", action="store_true",
@@ -324,8 +330,8 @@ def make_parser() -> argparse.ArgumentParser:
 def main() -> None:
     """Entry point for the demo."""
     args = make_parser().parse_args()
-    keep_classes = set(parse_keep(args.keep_classes))
-    logger.info(f"Keeping classes: {sorted(keep_classes)}")
+    keep_classes = parse_keep_classes(args.keep_classes)
+    logger.info("Keeping classes: %s", "ALL" if keep_classes is None else keep_classes)
 
     # Heavy imports are done lazily to keep unit tests lightweight.
     from yolox.exp import get_exp
@@ -454,46 +460,49 @@ def main() -> None:
         online_scores: List[float] = []
         online_cls_ids: List[int] = []
 
-        dets = (
-            outputs[0].cpu().numpy()
-            if outputs[0] is not None
-            else np.empty((0, 5), dtype=np.float32)
-        )
-        if dets.size > 0:
-            dets[:, :4] /= img_info["ratio"]
-        logger.info(
-            "Frame %d: dets shape after rescale: %s", frame_id, tuple(dets.shape)
-        )
-        dets_in, det_cls = normalize_dets(dets, keep_classes)
-        logger.info(
-            "Frame %d: kept %d/%d detections (after class filter and rescale)",
-            frame_id,
-            dets_in.shape[0],
-            dets.shape[0],
-        )
-        assert (
-            dets_in.ndim == 2 and dets_in.shape[1] == 5
-        ), "dets_in must be (N,5) [x1,y1,x2,y2,score]"
-        assert np.all(
-            dets_in[:, :4] >= 0
-        ), "coords must be non-negative after rescale"
-        if dets_in.shape[0] > 0:
-            online_targets = tracker.update(
-                dets_in,
-                [img_info["height"], img_info["width"]],
-                exp.test_size,
+        if outputs[0] is None:
+            bboxes_xyxy = np.empty((0, 4), dtype=np.float32)
+            scores = np.empty((0,), dtype=np.float32)
+            cls_ids = np.empty((0,), dtype=np.int32)
+        else:
+            out_np = outputs[0].cpu().numpy()
+            bboxes_xyxy = out_np[:, 0:4] / img_info["ratio"]
+            scores = out_np[:, 4]
+            cls_ids = out_np[:, 6].astype(np.int32)
+
+        if keep_classes is not None:
+            mask = np.isin(cls_ids, keep_classes)
+            bboxes_xyxy = bboxes_xyxy[mask]
+            scores = scores[mask]
+            cls_ids = cls_ids[mask]
+
+        if bboxes_xyxy.size == 0:
+            dets_for_tracker = np.empty((0, 5), dtype=np.float32)
+        else:
+            dets_for_tracker = np.hstack([bboxes_xyxy, scores[:, None]]).astype(
+                np.float32
             )
+
+        if dets_for_tracker.size > 0:
+            try:
+                online_targets = tracker.update(
+                    dets_for_tracker, img_info["raw_img"].shape[:2]
+                )
+            except TypeError:
+                online_targets = tracker.update(
+                    dets_for_tracker,
+                    img_info["raw_img"].shape[:2],
+                    exp.test_size,
+                )
             for t in online_targets:
                 tlwh = t.tlwh
-                if tlwh[2] * tlwh[3] > args.min_box_area:
-                    online_tlwhs.append(tlwh)
-                    online_ids.append(t.track_id)
-                    online_scores.append(t.score)
-                    cls_val = getattr(t, "cls", None)
-                    online_cls_ids.append(
-                        int(cls_val) if cls_val is not None else -1
-                    )
-        if len(online_tlwhs) == 0 and dets_in.shape[0] > 0:
+                if tlwh[2] * tlwh[3] <= 0:
+                    continue
+                online_tlwhs.append(tlwh)
+                online_ids.append(t.track_id)
+                online_scores.append(t.score)
+                online_cls_ids.append(getattr(t, "cls", -1))
+        if len(online_tlwhs) == 0 and dets_for_tracker.size > 0:
             logger.debug(
                 "No tracks after filter; dets present. Check min_box_area=%s / tracker thresholds.",
                 args.min_box_area,
@@ -507,16 +516,16 @@ def main() -> None:
         fps = float(fps_meter.update(_dt) or 0.0)
 
         raw_im = img_info["raw_img"]
-        draw_src = raw_im.copy()
+        raw_copy = raw_im.copy()
         vis_im = call_with_supported_kwargs(
             plot_tracking,
-            draw_src,
+            raw_im,
             online_tlwhs,
             online_ids,
             scores=online_scores,
             frame_id=frame_id,
             fps=fps,
-            cls_ids=online_cls_ids,
+            cls_ids=online_cls_ids if online_cls_ids else None,
         )
 
         if args.save_result:
@@ -561,7 +570,7 @@ def main() -> None:
                 break
 
         if args.save_result and writer is not None:
-            frame_to_write = raw_im if getattr(args, "save_raw", False) else vis_im
+            frame_to_write = raw_copy if getattr(args, "save_raw", False) else vis_im
             writer.write(frame_to_write)
             records.append(
                 {

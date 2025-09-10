@@ -1,6 +1,6 @@
 # decoder-lite
 
-Minimal ByteTrack wrapper that tracks only COCO classes **0** (person) and **32** (sports ball).
+Minimal ByteTrack wrapper with optional COCO class filtering.
 
 ## Prerequisites
 - Ubuntu 22.04 with NVIDIA GPU (CUDA 12.x, tested with 12.9)
@@ -92,16 +92,16 @@ and IDs. With `--save_result` the annotated frames are written to
 `outputs/videos/result.mp4`. Pass `--save-raw` to store unmodified frames
 instead. JSON logs are written to `outputs/logs/result.json`.
 
-Use the `--keep-classes` flag to restrict tracking to specific class IDs. If the
-detector outputs only five columns (no class column), the flag is ignored and a
-warning is logged. YOLOX detections with five, six, or seven columns are
-supported; for the seven-column variant the final score is ``obj_conf *
-cls_conf``. Class filtering is "soft": if the filter removes all detections in a
-frame, it is disabled for that frame and a warning is emitted so visualization
-is preserved.
+Use the `--keep-classes` flag to restrict tracking to specific COCO class IDs
+(``--keep-classes 0,32`` for persons and sports balls). Passing no value or an
+empty string disables filtering. If the detector outputs only five columns (no
+class column), the flag is ignored and a warning is logged. YOLOX detections
+with five, six, or seven columns are supported; for the seven-column variant the
+final score is ``obj_conf * cls_conf``. Class filtering is "soft": if the filter
+removes all detections in a frame, it is disabled for that frame and a warning
+is emitted so visualization is preserved.
 
 ## Notes
-- Only COCO classes 0 and 32 are processed.
 - FPS is smoothed with an exponential moving average and falls back to
   ``time.perf_counter`` if the ByteTrack timer lacks ``toc``.
 - Inference always runs in FP32; any `--fp16` flag is ignored and the launcher logs `Using FP32 inference (fp16 disabled)`.

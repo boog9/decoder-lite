@@ -17,7 +17,7 @@ EXTRA ?=
 WEIGHTS ?= third_party/ByteTrack/pretrained/yolox_x.pth
 
 # Enforce FP32 by default; no --fp16 flag is present in the run arguments.
-RUN_ARGS ?= --save_result --device gpu --keep-classes 0,32 --no-display
+RUN_ARGS ?= --save_result --device gpu --no-display
 
 VENV_DIR := .venv
 PYTHON := $(VENV_DIR)/bin/python
