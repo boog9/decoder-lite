@@ -29,7 +29,7 @@ SPEC = importlib.util.spec_from_file_location(
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(MODULE)
-parse_keep = MODULE.parse_keep
+parse_keep_classes = MODULE.parse_keep_classes
 filter_by_classes = MODULE.filter_by_classes
 FpsEMA = MODULE.FpsEMA
 call_with_supported_kwargs = MODULE.call_with_supported_kwargs
@@ -47,10 +47,10 @@ def test_save_raw_flag() -> None:
     assert args.save_raw is True
 
 
-def test_parse_keep() -> None:
-    assert parse_keep("0,32") == [0, 32]
-    assert parse_keep("32,0,0") == [0, 32]
-    assert parse_keep("") == []
+def test_parse_keep_classes() -> None:
+    assert parse_keep_classes("0,32") == [0, 32]
+    assert parse_keep_classes("") is None
+    assert parse_keep_classes(None) is None
 
 
 @pytest.mark.skipif(np is None, reason="numpy not available")
