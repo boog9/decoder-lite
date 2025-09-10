@@ -46,7 +46,8 @@ We never modify files under `third_party/ByteTrack/`. If the folder is missing o
 
 ## Setup
 ```bash
-make venv      # create venv, clone ByteTrack, install deps
+python -m venv .venv && source .venv/bin/activate  # create and activate venv
+make venv      # clone ByteTrack, install deps
 
 # download YOLOX weights
 make weights
